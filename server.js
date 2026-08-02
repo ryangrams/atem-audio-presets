@@ -425,14 +425,40 @@ app.post(
 	})
 )
 
-const server = app.listen(PORT, '127.0.0.1', () => {
-	console.log(`\n  ATEM Audio Presets  →  http://127.0.0.1:${PORT}\n`)
-})
+let httpServer = null
 
-for (const sig of ['SIGINT', 'SIGTERM']) {
-	process.on(sig, async () => {
-		server.close()
-		await disconnectAll()
-		process.exit(0)
+/**
+ * Start listening. Port 0 asks the OS for a free port, which is what the desktop app uses so a
+ * second copy — or anything else already on 8730 — cannot collide.
+ */
+export function start({ port = PORT, host = '127.0.0.1' } = {}) {
+	return new Promise((resolve, reject) => {
+		const s = app.listen(port, host, () => {
+			httpServer = s
+			const actual = s.address().port
+			resolve({ server: s, port: actual, url: `http://${host}:${actual}` })
+		})
+		s.on('error', reject)
 	})
+}
+
+/** Close the listener and drop every switcher connection. */
+export async function stop() {
+	httpServer?.close()
+	httpServer = null
+	await disconnectAll()
+}
+
+export { app }
+
+// Run directly (`npm start`, `npx atem-audio-presets`) rather than imported by the desktop app.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+	const { url } = await start()
+	console.log(`\n  ATEM Audio Presets  →  ${url}\n`)
+	for (const sig of ['SIGINT', 'SIGTERM']) {
+		process.on(sig, async () => {
+			await stop()
+			process.exit(0)
+		})
+	}
 }
