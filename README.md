@@ -190,6 +190,12 @@ needs you to own that platform.
 Presets live beside the app when run from source (`./presets`), and in the per-user application
 data folder when run as the packaged app — *Help → Show presets folder* opens it.
 
+## Support
+
+ATEM Audio Presets is free and open source. If it saves you time in the studio, you can
+[**support its development on GitHub Sponsors ☕**](https://github.com/sponsors/ryangrams).
+Bug reports, ideas and shares help just as much.
+
 ## Licence
 
 MIT — see [LICENSE](LICENSE).
