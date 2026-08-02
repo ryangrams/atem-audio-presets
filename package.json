@@ -70,7 +70,6 @@
       "server.js",
       "package.json"
     ],
-    "//": "Native addons cannot be loaded from inside an asar archive.",
     "asarUnpack": [
       "**/*.node"
     ],
