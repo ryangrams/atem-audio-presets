@@ -7,6 +7,23 @@ two ATEMs, and as named presets you can group and reuse.
 Built for the case the switcher itself makes tedious: you dialled in a mic on one box and now want
 that exact chain on three cameras, or on a second switcher, or saved for the next shoot.
 
+## Download
+
+Grab the app for your platform from the
+[latest release](https://github.com/ryangrams/atem-audio-presets/releases/latest) — a `.dmg` for
+macOS, an installer for Windows. Double-click, and it opens. No terminal, no Node, no browser
+tab to remember.
+
+Run it on a machine on the same network as the switcher — your laptop, the studio Mac — and it
+will find the ATEMs you point it at.
+
+> **Before the app is signed:** downloads are not yet code-signed, so the first launch needs one
+> extra step. On **macOS**, right-click the app and choose *Open*, then *Open* again (double-
+> clicking shows "cannot be opened" instead). On **Windows**, SmartScreen shows "Windows
+> protected your PC" — choose *More info* → *Run anyway*. Both go away once the app is signed.
+
+### Or run it from source
+
 ```bash
 git clone https://github.com/ryangrams/atem-audio-presets.git
 cd atem-audio-presets
@@ -14,10 +31,7 @@ npm install
 npm start
 ```
 
-Then open <http://127.0.0.1:8730>. Node 18 or newer; two dependencies, no build step.
-
-Run it on a machine on the same network as the switcher — your laptop, the studio Mac, a
-Raspberry Pi — and use it from the browser there.
+Then open <http://127.0.0.1:8730>. Node 18 or newer; two runtime dependencies, no build step.
 
 ## Why it runs on your machine, not on a web page
 
@@ -160,6 +174,21 @@ curl -s -X POST http://127.0.0.1:8730/api/apply -H 'Content-Type: application/js
   "sections": {"eq": true, "dynamics": true}
 }'
 ```
+
+## Building the apps
+
+```bash
+npm run app          # run the desktop shell against your working tree
+npm run dist:mac     # .dmg (arm64 + x64)
+npm run dist:win     # Windows installer
+npm run icon         # regenerate build/icon.png
+```
+
+Pushing a `v*` tag builds both on GitHub Actions and attaches them to a release, so neither build
+needs you to own that platform.
+
+Presets live beside the app when run from source (`./presets`), and in the per-user application
+data folder when run as the packaged app — *Help → Show presets folder* opens it.
 
 ## Licence
 

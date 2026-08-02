@@ -1,0 +1,52 @@
+name: Build desktop apps
+
+# Tag a version (git tag v1.0.0 && git push --tags) and this builds the Mac and Windows apps on
+# their own native runners, then attaches them to a GitHub Release. Nobody needs to own both
+# machines to ship both builds.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            script: dist:mac
+          - os: windows-latest
+            script: dist:win
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build and publish
+        run: npm run ${{ matrix.script }} -- --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No Developer ID yet: build unsigned rather than picking up whatever is in the
+          # runner's keychain. When the certificate arrives, add CSC_LINK / CSC_KEY_PASSWORD
+          # (and APPLE_ID / APPLE_APP_SPECIFIC_PASSWORD / APPLE_TEAM_ID for notarisation) as
+          # repository secrets and delete this line.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Keep the installers even if the release step fails
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}-installers
+          path: |
+            dist/*.dmg
+            dist/*.exe
+          if-no-files-found: warn

@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Save, load and copy Fairlight audio settings — levels, EQ and dynamics — between channels, between ATEM switchers, and as named presets",
   "type": "module",
-  "main": "server.js",
+  "main": "electron/main.js",
   "bin": {
     "atem-audio-presets": "server.js"
   },
@@ -15,7 +15,12 @@
     "LICENSE"
   ],
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "app": "electron .",
+    "icon": "node scripts/make-icon.mjs",
+    "dist": "electron-builder --mac --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win"
   },
   "keywords": [
     "atem",
@@ -44,5 +49,58 @@
   "dependencies": {
     "atem-connection": "^3.9.0",
     "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "electron": "^43.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.ryangrams.atem-audio-presets",
+    "productName": "ATEM Audio Presets",
+    "copyright": "Copyright © 2026 Ryan Grams",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "lib/**/*",
+      "public/**/*",
+      "server.js",
+      "package.json"
+    ],
+    "//": "Native addons cannot be loaded from inside an asar archive.",
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64", "x64"]
+        }
+      ],
+      "category": "public.app-category.utilities",
+      "icon": "build/icon.png",
+      "darkModeSupport": true
+    },
+    "dmg": {
+      "title": "ATEM Audio Presets"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "shortcutName": "ATEM Audio Presets"
+    }
   }
 }

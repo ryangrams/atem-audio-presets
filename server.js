@@ -14,9 +14,17 @@ import { connect, disconnect, disconnectAll, firmwareInfo, status } from './lib/
 import { applyChannel, diffChannel, extractChannel, extractSwitcher, listChannels, summarizeChannel } from './lib/fairlight.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const PRESET_DIR = path.join(__dirname, 'presets')
-const BACKUP_DIR = path.join(PRESET_DIR, '_backups')
 const PORT = Number(process.env.PORT ?? 8730)
+
+/**
+ * Where presets and pre-write backups live.
+ *
+ * Running from a clone this is just ./presets. Inside a packaged desktop app the program
+ * directory is read-only, so the Electron main process passes a writable per-user path
+ * (ATEM_PRESET_DIR) instead.
+ */
+const PRESET_DIR = process.env.ATEM_PRESET_DIR || path.join(__dirname, 'presets')
+const BACKUP_DIR = path.join(PRESET_DIR, '_backups')
 
 const app = express()
 app.use(express.json({ limit: '4mb' }))
