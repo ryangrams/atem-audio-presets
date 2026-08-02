@@ -21,6 +21,10 @@ const LEVEL = { 0: '', 1: 'Mic', 2: 'Consumer', 4: 'Pro line' }
 /** localStorage namespace — one place, so the stored keys track the app name. */
 const LS = 'atem-audio-presets'
 
+// Where the "buy me a coffee" link points. Empty means there is nowhere to send people yet, and
+// the link removes itself rather than shipping as a dead ☕.
+const SUPPORT_URL = ''
+
 // A column holds either a switcher or the preset library. Only one side can be the library at a
 // time, which is what makes preset-into-preset impossible rather than merely disallowed.
 const state = {
@@ -32,7 +36,7 @@ const state = {
 	two: localStorage.getItem(`${LS}.two`) === '1',
 	// What a copy carries. The checkboxes live in the source card's own block headers, so this
 	// object — not the DOM — is the source of truth; the cards render from it.
-	sections: { levels: true, eq: true, dynamics: true, inputConfig: false },
+	sections: { gain: true, volume: true, pan: true, eq: true, dynamics: true, inputConfig: false },
 }
 
 const selectedKeys = (side) => state[side].selection.filter((k) => state[side].channels.some((c) => c.key === k))
@@ -212,7 +216,7 @@ function applyMode() {
 	if (!state.two) bIp.value = panel('A').querySelector('.ip').value
 	bIp.title = state.two ? '' : 'Same switcher — press “Add second switcher” to copy across two'
 	const bTitle = panel('B').querySelector('.col-title')
-	bTitle.textContent = 'To'
+	bTitle.textContent = 'Destination'
 	bTitle.title = isLib('B')
 		? 'Saving into the preset library'
 		: state.two
@@ -571,7 +575,7 @@ function renderSaveCard(box) {
 	const groups = [...new Set(state.library.presets.map((p) => p.group).filter(Boolean))]
 	const on = Object.entries(state.sections)
 		.filter(([, v]) => v)
-		.map(([k]) => ({ levels: 'Levels', eq: 'EQ', dynamics: 'Dynamics', inputConfig: 'Input config' })[k])
+		.map(([k]) => ({ gain: 'Gain', volume: 'Volume', pan: 'Pan', eq: 'EQ', dynamics: 'Dynamics', inputConfig: 'Input' })[k])
 
 	box.innerHTML = `<div class="savecard">
 		<div class="saverow">
@@ -624,7 +628,7 @@ function setStatus(text, cls) {
 function updateSummary() {
 	const box = $('#summary')
 	if (!box) return
-	const names = { levels: 'Levels', eq: 'EQ', dynamics: 'Dynamics', inputConfig: 'Input config' }
+	const names = { gain: 'Gain', volume: 'Volume', pan: 'Pan', eq: 'EQ', dynamics: 'Dynamics', inputConfig: 'Input' }
 	const on = Object.entries(state.sections)
 		.filter(([, v]) => v)
 		.map(([k]) => names[k])
@@ -670,7 +674,7 @@ function sections() {
 function destinations() {
 	const s = state.B
 	const keys = selectedKeys('B')
-	if (!keys.length) throw new Error('Pick one or more destination channels in the “Copy to” panel (⌘-click or shift-click for several)')
+	if (!keys.length) throw new Error('Pick one or more destination channels (⌘-click or shift-click for several)')
 	return keys.map((k) => {
 		const c = channelFor('B', k)
 		return { ip: s.ip, input: c.inputId, source: c.sourceId, label: c.label }
@@ -1000,11 +1004,9 @@ $('#load-file').onchange = async (e) => {
 }
 
 // A block *is* the control: click anywhere in one on the source card to include or exclude that
-// section. Input configuration keeps its own checkbox, since it is the one that renumbers
-// source ids and should never be switched on by a stray click.
+// section from the copy.
 document.addEventListener('click', (e) => {
 	if (!e.target.closest('#panel-A .stripcard.selectable')) return
-	if (e.target.closest('.incfg')) return
 	const block = e.target.closest('.block[data-sec]')
 	if (!block) return
 	const name = block.dataset.sec
@@ -1015,3 +1017,7 @@ document.addEventListener('click', (e) => {
 
 updateSummary()
 loadPresets()
+
+const coffee = $('#coffee')
+if (SUPPORT_URL) coffee.href = SUPPORT_URL
+else coffee.remove()

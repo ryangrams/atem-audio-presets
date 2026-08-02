@@ -151,11 +151,14 @@ main {
 .col-title {
 	display: block;
 	font-size: 10.5px;
+	font-weight: 600;
 	text-transform: uppercase;
-	letter-spacing: 0.09em;
-	color: var(--dim);
+	letter-spacing: 0.06em;
+	color: var(--text);
 	margin-bottom: 6px;
+	white-space: nowrap;
 }
+
 .col-title em {
 	font-style: normal;
 	text-transform: none;
@@ -486,14 +489,6 @@ details summary:hover {
 	margin-top: 1px;
 }
 .ctrl em,
-.strip-on em {
-	display: block;
-	font-style: normal;
-	font-size: 8px;
-	color: var(--faint);
-	text-transform: uppercase;
-	letter-spacing: 0.04em;
-}
 .ctrl .was {
 	color: var(--warn);
 	text-transform: none;
@@ -501,41 +496,6 @@ details summary:hover {
 	font-size: 8.5px;
 	margin-top: 1px;
 }
-.strip-delay {
-	font-size: 9.5px;
-	color: var(--faint);
-	margin-bottom: 5px;
-}
-.strip-delay.on {
-	color: var(--good);
-}
-
-/* On / off is a live operating control, never part of a copy — so it sits outside the block. */
-.strip-on {
-	margin-top: 5px;
-	border-radius: 6px;
-	padding: 3px 0 2px;
-	font-size: 10px;
-	font-weight: 700;
-	letter-spacing: 0.06em;
-	text-align: center;
-	background: var(--well);
-	border: 1px solid var(--line-2);
-	color: var(--faint);
-}
-.strip-on.live {
-	color: var(--amber);
-	border-color: #6b4718;
-}
-.strip-on.afv {
-	color: var(--accent);
-	border-color: #2b4d72;
-}
-.strip-on em {
-	font-weight: 400;
-	letter-spacing: 0.03em;
-}
-
 /* ---- knob and fader ---- */
 
 .knob {
@@ -627,47 +587,6 @@ details summary:hover {
 	color: var(--warn);
 }
 /* Marks a block on the destination card that is showing the incoming values. */
-.pv {
-	font-size: 8.5px;
-	letter-spacing: 0.06em;
-	color: var(--good);
-	border: 1px solid rgba(62, 201, 122, 0.5);
-	border-radius: 999px;
-	padding: 0 5px;
-	text-transform: uppercase;
-	font-weight: 400;
-}
-.strip-name .pv {
-	display: block;
-	margin: 2px auto 0;
-	width: fit-content;
-}
-
-.incfg {
-	display: flex;
-	align-items: baseline;
-	gap: 6px;
-	font-size: 10.5px;
-	color: var(--faint);
-	cursor: pointer;
-	padding: 2px 2px 0;
-}
-.incfg input {
-	accent-color: var(--amber);
-	width: 12px;
-	height: 12px;
-	margin: 0;
-	cursor: pointer;
-}
-.incfg.on {
-	color: var(--amber);
-}
-.incfg em {
-	font-style: normal;
-	font-size: 9.5px;
-	color: #555;
-}
-
 /* ---- curves ---- */
 
 /* Pin each graph to its viewBox aspect ratio — stretching an SVG distorts the band numbers. */
@@ -983,16 +902,16 @@ details summary:hover {
 }
 .col-top .col-title {
 	margin: 0;
-	flex: 1;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
+	/* The heading names the column, so it keeps its width; the toggle shrinks first. */
+	flex: none;
 	white-space: nowrap;
 }
 /* Segmented control: what this column holds. */
 .kinds {
 	display: flex;
-	flex: none;
+	flex: 0 1 auto;
+	min-width: 0;
+	margin-left: auto;
 	border: 1px solid var(--line);
 	border-radius: 999px;
 	overflow: hidden;
@@ -1098,4 +1017,97 @@ details summary:hover {
 }
 .savenote b {
 	color: var(--dim);
+}
+
+/* ---- gain / volume / pan are three separate copyable blocks ---- */
+
+.strip .ctrl {
+	padding: 5px 3px 6px;
+	margin-bottom: 5px;
+}
+.strip .ctrl b {
+	display: block;
+	font-size: 9px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.07em;
+	color: var(--dim);
+	margin-bottom: 3px;
+}
+.strip .ctrl .delay {
+	font-size: 9px;
+	color: var(--faint);
+	margin-top: 3px;
+}
+.strip .ctrl .delay.on {
+	color: var(--good);
+}
+
+/* ---- input configuration ---- */
+
+.cfg {
+	display: flex;
+	flex-direction: column;
+	gap: 5px;
+}
+.cfgrow {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.cfgrow em {
+	font-style: normal;
+	font-size: 9.5px;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: var(--faint);
+	min-width: 52px;
+}
+.segs {
+	display: flex;
+	gap: 3px;
+}
+.seg {
+	font-size: 10.5px;
+	padding: 2px 9px;
+	border-radius: 999px;
+	border: 1px solid var(--line-2);
+	background: var(--well);
+	color: var(--faint);
+}
+.seg.on {
+	border-color: var(--accent);
+	color: var(--accent);
+	background: #16283c;
+}
+.cfgnone {
+	font-size: 10.5px;
+	color: var(--faint);
+}
+
+/* ---- attribution ---- */
+
+.madeby {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	flex: none;
+	font-size: 11.5px;
+	padding-left: 12px;
+	border-left: 1px solid var(--line-2);
+}
+.madeby a {
+	color: var(--dim);
+	text-decoration: none;
+	white-space: nowrap;
+}
+.madeby a:hover {
+	color: var(--text);
+}
+.madeby strong {
+	color: var(--text);
+	font-weight: 600;
+}
+.madeby .coffee:hover {
+	color: var(--amber);
 }

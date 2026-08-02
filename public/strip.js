@@ -297,7 +297,6 @@ function fader(db) {
 const fdB = (v) => `${(v / 100).toFixed(2)}`
 const f1 = (v) => `${(v / 100).toFixed(1)}`
 const fHz = (v) => (v >= 1000 ? `${(v / 1000).toFixed(2).replace(/\.?0+$/, '')}k` : `${v}`)
-const MIXNAME = { 1: 'OFF', 2: 'ON', 4: 'AFV' }
 const panText = (v) => (v === 0 ? 'C' : `${v > 0 ? 'R' : 'L'}${Math.abs(v / 100).toFixed(0)}`)
 
 /**
@@ -315,41 +314,44 @@ function renderStripCard(box, d, opts = {}) {
 	const use = (name) => (!opts.source && inc && sec[name] ? inc : d)
 	const ghostOf = (name) => (!opts.source && inc && sec[name] ? d : null)
 
-	const lv = use('levels').levels ?? {}
+	// Gain, volume and pan are copied independently, so each is its own block. They share one
+	// underlying `levels` payload; which fields travel is decided per section.
+	const gainL = use('gain').levels ?? {}
+	const volL = use('volume').levels ?? {}
+	const panL = use('pan').levels ?? {}
 	const now = d.levels ?? {}
 	const eq = use('eq').equalizer ?? use('eq').eq
 	const dyn = use('dynamics').dynamics ?? {}
+	const cfg = use('inputConfig').meta ?? {}
 	const eqGhost = ghostOf('eq') ? (ghostOf('eq').equalizer ?? ghostOf('eq').eq) : null
 	const dynGhost = ghostOf('dynamics')?.dynamics ?? null
 
 	// Green marks every block this copy touches — on both cards, so the pairing is obvious.
 	const cls = (name) => (sec[name] ? ' sel' : opts.source ? ' unsel' : '')
-	// On the destination these blocks show what the channel *will* be, not what it is.
-	const pv = (name) => (!opts.source && inc && sec[name] ? '<span class="pv">preview</span>' : '')
 	const was = (name, current, next, fmt) =>
 		!opts.source && inc && sec[name] && current !== next ? `<em class="was">was ${fmt(current)}</em>` : ''
 
-	const strip = `<div class="strip block${cls('levels')}" data-sec="levels">
-		<div class="strip-name">${d.meta.label}${pv('levels')}</div>
-		<div class="ctrl">
-			${knob(((lv.gain ?? 0) / 100 + 60) / 66, 0, '#3ec97a')}
-			<span class="val">${fdB(lv.gain)}</span><em>gain dB</em>
-			${was('levels', now.gain, lv.gain, fdB)}
+	const strip = `<div class="strip">
+		<div class="strip-name">${d.meta.label}</div>
+		<div class="ctrl block${cls('gain')}" data-sec="gain">
+			<b>Gain</b>
+			${knob(((gainL.gain ?? 0) / 100 + 60) / 66, 0, '#3ec97a')}
+			<span class="val">${fdB(gainL.gain)}</span><em>dB</em>
+			${was('gain', now.gain, gainL.gain, fdB)}
+			<div class="delay ${gainL.framesDelay ? 'on' : ''}">⇢ ${gainL.framesDelay ?? 0} frame${gainL.framesDelay === 1 ? '' : 's'}</div>
 		</div>
-		<div class="strip-delay ${lv.framesDelay ? 'on' : ''}">⇢ ${lv.framesDelay ?? 0} frame${lv.framesDelay === 1 ? '' : 's'}</div>
-		<div class="ctrl">
-			${fader((lv.faderGain ?? 0) / 100)}
-			<span class="val">${fdB(lv.faderGain)}</span><em>fader dB</em>
-			${was('levels', now.faderGain, lv.faderGain, fdB)}
+		<div class="ctrl block${cls('volume')}" data-sec="volume">
+			<b>Volume</b>
+			${fader((volL.faderGain ?? 0) / 100)}
+			<span class="val">${fdB(volL.faderGain)}</span><em>dB</em>
+			${was('volume', now.faderGain, volL.faderGain, fdB)}
 		</div>
-		<div class="ctrl">
-			${knob(((lv.balance ?? 0) + 10000) / 20000, 0.5, '#4a90d9')}
-			<span class="val">${panText(lv.balance ?? 0)}</span><em>pan L–R</em>
-			${was('levels', now.balance, lv.balance, panText)}
+		<div class="ctrl block${cls('pan')}" data-sec="pan">
+			<b>Pan</b>
+			${knob(((panL.balance ?? 0) + 10000) / 20000, 0.5, '#4a90d9')}
+			<span class="val">${panText(panL.balance ?? 0)}</span><em>L – R</em>
+			${was('pan', now.balance, panL.balance, panText)}
 		</div>
-	</div>
-	<div class="strip-on ${now.mixOption === 2 ? 'live' : now.mixOption === 4 ? 'afv' : ''}">
-		${MIXNAME[now.mixOption] ?? '—'}<em>never copied</em>
 	</div>`
 
 	const bands = (eq?.bands ?? [])
@@ -401,17 +403,43 @@ function renderStripCard(box, d, opts = {}) {
 		<div class="stripwrap">${strip}</div>
 		<div class="graphs">
 			<div class="gblock block${cls('eq')}" data-sec="eq">
-				<div class="glabel">Equalizer ${pv('eq')}${eq?.enabled ? '' : '<span class="byp">bypassed</span>'}<span class="gval">${eq?.gain ? `${eq.gain > 0 ? '+' : ''}${fdB(eq.gain)} dB` : ''}</span></div>
+				<div class="glabel">Equalizer ${eq?.enabled ? '' : '<span class="byp">bypassed</span>'}<span class="gval">${eq?.gain ? `${eq.gain > 0 ? '+' : ''}${fdB(eq.gain)} dB` : ''}</span></div>
 				${eqGraph(eq, eqGhost)}
 				<div class="bands">${bands}</div>
 			</div>
 			<div class="gblock block${cls('dynamics')}" data-sec="dynamics">
-				<div class="glabel">Dynamics ${pv('dynamics')}<span class="gval">in → out dB</span></div>
+				<div class="glabel">Dynamics<span class="gval">in → out dB</span></div>
 				<div class="dynrow">${dynamicsGraph(dyn, dynGhost)}${makeUpFader(dyn.makeUpGain ?? 0)}<div class="units">${dynUnits}</div></div>
 			</div>
-			${opts.source ? `<label class="incfg${sec.inputConfig ? ' on' : ''}"><input type="checkbox" data-sec="inputConfig"${sec.inputConfig ? ' checked' : ''} /> Also copy input configuration <em>mono/stereo + mic/line — renumbers source ids</em></label>` : ''}
+			<div class="gblock block${cls('inputConfig')}" data-sec="inputConfig">
+				<div class="glabel">Input</div>
+				${inputConfig(cfg, d.meta)}
+			</div>
 		</div>
 	</div>`
+}
+
+const CONFIG_NAME = { 1: 'Mono', 2: 'Stereo', 4: 'Dual mono' }
+const LEVEL_NAME = { 1: 'Mic', 2: 'Consumer', 4: 'Pro line' }
+
+/**
+ * How the physical input is wired up: channel layout and analogue level.
+ *
+ * Drawn as two segmented rows so it reads like the switcher's own picker. Only the options this
+ * input actually supports are shown — a camera input has no mic/line choice, and offering one
+ * would imply a setting that does not exist.
+ */
+function inputConfig(shown, own) {
+	const row = (label, options, active, names) => {
+		if (!options?.length) return ''
+		return `<div class="cfgrow"><em>${label}</em><div class="segs">${options
+			.map((o) => `<span class="seg${o === active ? ' on' : ''}">${names[o] ?? o}</span>`)
+			.join('')}</div></div>`
+	}
+	const layout = row('Channels', own.supportedConfigurations, shown.configuration, CONFIG_NAME)
+	const level = row('Level', own.supportedInputLevels, shown.inputLevel, LEVEL_NAME)
+	if (!layout && !level) return '<div class="cfgnone">Fixed — nothing to configure on this input.</div>'
+	return `<div class="cfg">${layout}${level}</div>`
 }
 
 /**

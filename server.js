@@ -114,7 +114,9 @@ async function resolvePayload(body) {
 
 function normalizeSections(sections) {
 	return {
-		levels: Boolean(sections?.levels),
+		gain: Boolean(sections?.gain),
+		volume: Boolean(sections?.volume),
+		pan: Boolean(sections?.pan),
 		eq: Boolean(sections?.eq),
 		dynamics: Boolean(sections?.dynamics),
 		inputConfig: Boolean(sections?.inputConfig),
