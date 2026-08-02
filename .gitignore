@@ -1,0 +1,8 @@
+node_modules/
+
+# User data: saved presets and the automatic pre-write backups are yours, not the project's.
+presets/*.json
+presets/_backups/
+!presets/.gitkeep
+
+.DS_Store

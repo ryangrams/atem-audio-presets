@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>ATEM Audio Presets</title>
+		<link rel="stylesheet" href="style.css" />
+	</head>
+	<body>
+		<header>
+			<h1>ATEM Audio Presets</h1>
+			<div class="head-actions">
+				<button id="apply" class="primary big">Copy →</button>
+				<button id="undo">Undo</button>
+			</div>
+			<div class="head-right"><button id="mode-toggle">Add second switcher</button></div>
+		</header>
+
+		<main>
+			<section class="side" id="panel-A">
+				<div class="col list-col">
+					<div class="col-head">
+						<div class="col-top">
+							<span class="col-title">From</span>
+							<div class="kinds">
+								<button class="kind on" data-kind="atem">Switcher</button>
+								<button class="kind" data-kind="library">Presets</button>
+							</div>
+						</div>
+						<div class="conn">
+							<input class="ip" type="text" placeholder="192.168.8.20" autocomplete="off" />
+							<button class="connect">Connect</button>
+						</div>
+						<div class="device"></div>
+					</div>
+					<div class="channel-list"></div>
+				</div>
+				<div class="col card-col">
+					<div class="selcount"></div>
+					<div class="detail"></div>
+				</div>
+			</section>
+
+			<section class="side" id="panel-B">
+				<div class="col list-col">
+					<div class="col-head">
+						<div class="col-top">
+							<span class="col-title">To</span>
+							<div class="kinds">
+								<button class="kind on" data-kind="atem">Switcher</button>
+								<button class="kind" data-kind="library">Presets</button>
+							</div>
+						</div>
+						<div class="conn">
+							<input class="ip" type="text" placeholder="192.168.43.20" autocomplete="off" />
+							<button class="connect">Connect</button>
+						</div>
+						<div class="device"></div>
+					</div>
+					<div class="channel-list"></div>
+				</div>
+				<div class="col card-col">
+					<div class="selcount"></div>
+					<div class="detail"></div>
+				</div>
+			</section>
+		</main>
+
+		<footer class="statusbar">
+			<div class="summary" id="summary">Connect a switcher to begin.</div>
+			<div class="status" id="status"></div>
+			<button id="swap" title="Swap the two switchers">⇄</button>
+		</footer>
+
+		<div class="drawers">
+			<details id="drawer-presets">
+				<summary>Whole-switcher snapshots</summary>
+				<div class="drawer-body">
+					<div class="preset-io">
+						<button id="snapshot-A">Snapshot (from)</button>
+						<button id="snapshot-B">Snapshot (to)</button>
+						<label class="filebtn">Import file…<input type="file" id="load-file" accept="application/json" /></label>
+						<span class="drawer-note">A snapshot is every strip on a switcher, as one file. Single-channel presets live in the columns.</span>
+					</div>
+				</div>
+			</details>
+			<details id="drawer-log">
+				<summary>Details of the last copy</summary>
+				<div class="drawer-body"><div id="log"></div></div>
+			</details>
+		</div>
+
+		<script src="strip.js"></script>
+		<script src="app.js"></script>
+	</body>
+</html>

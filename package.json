@@ -1,0 +1,48 @@
+{
+  "name": "atem-audio-presets",
+  "version": "1.0.0",
+  "description": "Save, load and copy Fairlight audio settings — levels, EQ and dynamics — between channels, between ATEM switchers, and as named presets",
+  "type": "module",
+  "main": "server.js",
+  "bin": {
+    "atem-audio-presets": "server.js"
+  },
+  "files": [
+    "server.js",
+    "lib/",
+    "public/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [
+    "atem",
+    "blackmagic",
+    "fairlight",
+    "audio",
+    "presets",
+    "eq",
+    "dynamics",
+    "broadcast",
+    "video-switcher"
+  ],
+  "author": "Ryan Grams",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ryangrams/atem-audio-presets.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ryangrams/atem-audio-presets/issues"
+  },
+  "homepage": "https://github.com/ryangrams/atem-audio-presets#readme",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "atem-connection": "^3.9.0",
+    "express": "^4.21.2"
+  }
+}
