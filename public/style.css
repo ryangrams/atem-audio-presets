@@ -1125,3 +1125,18 @@ details summary:hover {
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
+
+.libfoot {
+	flex: none;
+	display: flex;
+	gap: 5px;
+	padding: 6px;
+	border-top: 1px solid var(--line-2);
+}
+.libfoot button,
+.libfoot .filebtn.small {
+	flex: 1;
+	font-size: 11px;
+	padding: 4px 8px;
+	text-align: center;
+}

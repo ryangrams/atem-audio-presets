@@ -316,6 +316,7 @@ function renderLibrary(side) {
 	const list = panel(side).querySelector('.channel-list')
 	list.textContent = ''
 	panel(side).querySelector('.toggle-minor')?.remove()
+	panel(side).querySelector('.libfoot')?.remove()
 
 	const presets = state.library.presets.filter((p) => p.format !== 'atem-audio-snapshot')
 	if (!presets.length) {
@@ -383,6 +384,22 @@ function renderLibrary(side) {
 			list.append(row)
 		}
 	}
+
+	// Whole-library export and import, always reachable — groups are optional, so these cannot
+	// live only on group headers.
+	const foot = el('div', 'libfoot')
+	const all = el('button', null, `Export all ${presets.length}\u2026`)
+	all.title = 'Bundle every preset into one shareable pack'
+	all.onclick = () => exportPack({ name: 'ATEM audio presets' })
+	foot.append(all)
+	const imp = el('label', 'filebtn small', 'Import\u2026')
+	const inp = el('input')
+	inp.type = 'file'
+	inp.accept = 'application/json'
+	inp.onchange = (e) => importFile(e)
+	imp.append(inp)
+	foot.append(imp)
+	list.after(foot)
 }
 
 /**
@@ -495,6 +512,7 @@ function renderChannels(side) {
 		list.append(row)
 	}
 	panel(side).querySelector('.toggle-minor')?.remove()
+	panel(side).querySelector('.libfoot')?.remove()
 	const hidden = s.channels.filter((c) => c.minor).length
 	if (hidden > 0) {
 		const btn = el('button', 'toggle-minor', s.showMinor ? `Hide ${hidden} MADI strips` : `Show ${hidden} MADI strips`)
@@ -1018,7 +1036,7 @@ $('#apply').onclick = apply
 $('#undo').onclick = undo
 $('#snapshot-A').onclick = () => snapshot('A')
 $('#snapshot-B').onclick = () => snapshot('B')
-$('#load-file').onchange = async (e) => {
+async function importFile(e) {
 	const file = e.target.files[0]
 	if (!file) return
 	const body = JSON.parse(await file.text())
@@ -1045,6 +1063,8 @@ $('#load-file').onchange = async (e) => {
 	}
 	e.target.value = ''
 }
+
+$('#load-file').onchange = importFile
 
 // A block *is* the control: click anywhere in one on the source card to include or exclude that
 // section from the copy.
