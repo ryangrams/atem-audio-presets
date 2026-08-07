@@ -1111,3 +1111,17 @@ details summary:hover {
 .madeby .coffee:hover {
 	color: var(--amber);
 }
+
+/* Group headers carry their own export, so a collection can be shared in one click. */
+.grouphead {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+.grouphead .gname {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}

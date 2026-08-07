@@ -254,6 +254,15 @@ app.post(
 
 // ---------------------------------------------------------------- presets on disk
 
+/**
+ * A preset's file name. Derived from its display name but stripped to something that cannot
+ * traverse, hide itself with a leading dot, or collide with the backups directory.
+ */
+const fileNameFor = (name) => {
+	const base = safeName(name).replace(/\s+/g, '-').replace(/\.+/g, '.').replace(/^[.\-]+|[.\-]+$/g, '')
+	return `${base || 'preset'}.json`
+}
+
 const safeName = (name) =>
 	String(name ?? '')
 		.trim()
@@ -351,7 +360,7 @@ app.post(
 		// Overwriting keeps the original file name (it is the id) and stashes the old contents.
 		const overwrite = req.body.overwrite ? safeName(req.body.overwrite) : null
 		if (overwrite && !overwrite.endsWith('.json')) throw new HttpError(400, 'Bad preset file')
-		const file = overwrite ?? `${name.replace(/\s+/g, '-')}.json`
+		const file = overwrite ?? fileNameFor(name)
 		const backedUp = await backupPreset(file)
 		await fs.writeFile(path.join(PRESET_DIR, file), JSON.stringify(body, null, 2))
 		res.json({ file, name, overwritten: backedUp })
@@ -376,6 +385,99 @@ app.patch(
 		if (req.body.defaultSections !== undefined) body.defaultSections = normalizeSections(req.body.defaultSections)
 		await fs.writeFile(full, JSON.stringify(body, null, 2))
 		res.json({ file, name: body.name, group: body.group ?? '', order: body.order ?? 0 })
+	})
+)
+
+/**
+ * A pack is one file holding many presets — the unit people share.
+ *
+ * It carries only what a preset needs to be re-applied: name, group, default sections and the
+ * channel itself. Nothing about the machine that exported it travels except the switcher model
+ * and firmware build, which are useful when judging whether a preset suits your hardware.
+ */
+app.post(
+	'/api/presets/pack',
+	wrap(async (req, res) => {
+		await fs.mkdir(PRESET_DIR, { recursive: true })
+		const wanted = Array.isArray(req.body.files) ? req.body.files.map(safeName) : null
+		const group = req.body.group
+
+		const presets = []
+		for (const file of (await fs.readdir(PRESET_DIR)).filter((f) => f.endsWith('.json'))) {
+			if (wanted && !wanted.includes(file)) continue
+			let body
+			try {
+				body = JSON.parse(await fs.readFile(path.join(PRESET_DIR, file), 'utf8'))
+			} catch {
+				continue
+			}
+			if (body.format !== 'atem-audio-preset' || !body.channel) continue
+			if (group !== undefined && (body.group ?? '') !== group) continue
+			presets.push({
+				name: body.name ?? file.replace(/\.json$/, ''),
+				group: body.group ?? '',
+				defaultSections: body.defaultSections ?? null,
+				device: body.device ? { model: body.device.model ?? null, release: body.device.release ?? null, build: body.device.build ?? null } : null,
+				channel: body.channel,
+			})
+		}
+		if (!presets.length) throw new HttpError(404, 'No presets matched — nothing to export')
+
+		res.json({
+			format: 'atem-audio-preset-pack',
+			version: 1,
+			name: String(req.body.name ?? 'ATEM audio presets').slice(0, 120),
+			description: String(req.body.description ?? '').slice(0, 2000),
+			author: String(req.body.author ?? '').slice(0, 120),
+			createdAt: new Date().toISOString(),
+			presets,
+		})
+	})
+)
+
+/**
+ * Unpack a shared pack into the library.
+ *
+ * Everything here arrived from someone else, so only known fields are kept and a preset that
+ * does not carry a channel is skipped rather than trusted. Existing names are suffixed instead
+ * of overwritten — importing should never cost you a preset you already had.
+ */
+app.post(
+	'/api/presets/import',
+	wrap(async (req, res) => {
+		const pack = req.body.pack
+		if (!Array.isArray(pack?.presets)) throw new HttpError(400, 'That file is not a preset pack')
+		await fs.mkdir(PRESET_DIR, { recursive: true })
+		const existing = new Set((await fs.readdir(PRESET_DIR)).filter((f) => f.endsWith('.json')))
+
+		const imported = []
+		const skipped = []
+		for (const entry of pack.presets) {
+			const name = safeName(entry?.name)
+			if (!name || !entry?.channel?.meta) {
+				skipped.push(entry?.name ?? '(unnamed)')
+				continue
+			}
+			let file = fileNameFor(name)
+			let n = 2
+			while (existing.has(file)) file = fileNameFor(`${name}-${n++}`)
+			existing.add(file)
+
+			const body = {
+				format: 'atem-audio-preset',
+				version: 1,
+				name,
+				group: safeName(entry.group ?? req.body.group ?? pack.name ?? ''),
+				defaultSections: normalizeSections(entry.defaultSections),
+				savedAt: new Date().toISOString(),
+				importedFrom: String(pack.name ?? '').slice(0, 120) || null,
+				device: entry.device ?? null,
+				channel: entry.channel,
+			}
+			await fs.writeFile(path.join(PRESET_DIR, file), JSON.stringify(body, null, 2))
+			imported.push({ file, name, group: body.group })
+		}
+		res.json({ imported, skipped })
 	})
 )
 

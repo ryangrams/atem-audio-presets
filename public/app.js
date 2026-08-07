@@ -328,7 +328,15 @@ function renderLibrary(side) {
 	const groups = [...new Set(presets.map((p) => p.group || ''))].sort((a, b) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b)))
 	for (const g of groups) {
 		if (groups.length > 1 || g) {
-			const head = el('div', 'grouphead', g || 'Ungrouped')
+			const head = el('div', 'grouphead')
+			head.append(el('span', 'gname', g || 'Ungrouped'))
+			const packBtn = el('button', 'rowbtn', '\u2913')
+			packBtn.title = `Export “${g || 'Ungrouped'}” as a shareable pack`
+			packBtn.onclick = (e) => {
+				e.stopPropagation()
+				exportPack({ group: g, name: g || 'Ungrouped presets' })
+			}
+			head.append(packBtn)
 			head.dataset.group = g
 			head.ondragover = (e) => e.preventDefault()
 			head.ondrop = (e) => dropPreset(e, g, null)
@@ -362,12 +370,42 @@ function renderLibrary(side) {
 				await loadPresets()
 			}
 			row.append(del)
+			const save = el('button', 'rowbtn', '\u2913')
+			save.title = 'Export this preset to a file'
+			save.onclick = async (e) => {
+				e.stopPropagation()
+				download(p.file, await api(`/api/presets/${encodeURIComponent(p.file)}`))
+			}
+			row.insertBefore(save, del)
 			row.onclick = () => selectPreset(side, p.file)
 			row.ondragstart = (e) => e.dataTransfer.setData('text/plain', p.file)
 			row.ondragover = (e) => e.preventDefault()
 			row.ondrop = (e) => dropPreset(e, g, p.file)
 			list.append(row)
 		}
+	}
+}
+
+/**
+ * Bundle presets into one shareable file.
+ *
+ * A pack is the unit people trade — and, later, the unit they submit to a shared library — so it
+ * carries names, groups and default sections, but nothing identifying about the machine that
+ * made it beyond the switcher model and firmware build.
+ */
+async function exportPack({ group, files, name }) {
+	try {
+		const pack = await api('/api/presets/pack', {
+			method: 'POST',
+			body: JSON.stringify({ group, files, name }),
+		})
+		const slug = (name || 'presets').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+		download(`${slug}-pack.json`, pack)
+		setStatus(`Exported ${pack.presets.length} preset${pack.presets.length === 1 ? '' : 's'}`, 'ok')
+		log(`Exported <strong>${pack.presets.length}</strong> preset${pack.presets.length === 1 ? '' : 's'} as “${esc(pack.name)}”.`, 'ok')
+	} catch (e) {
+		setStatus(e.message, 'err')
+		log(esc(e.message), 'err')
 	}
 }
 
@@ -987,6 +1025,12 @@ $('#load-file').onchange = async (e) => {
 	const body = JSON.parse(await file.text())
 	if (body.format === 'atem-audio-snapshot') {
 		await restoreSnapshot(body)
+	} else if (body.format === 'atem-audio-preset-pack' || Array.isArray(body.presets)) {
+		const r = await api('/api/presets/import', { method: 'POST', body: JSON.stringify({ pack: body }) })
+		await loadPresets()
+		setStatus(`Imported ${r.imported.length} preset${r.imported.length === 1 ? '' : 's'}`, 'ok')
+		log(`Imported <strong>${r.imported.length}</strong> preset${r.imported.length === 1 ? '' : 's'} from “${esc(body.name ?? file.name)}”.`, 'ok')
+		for (const s of r.skipped) log(`Skipped “${esc(s)}” — no channel data.`, 'warn')
 	} else if (body.channel) {
 		// An imported preset joins the library like any other; it is not a separate mode.
 		const name = body.name ?? file.name.replace(/\.json$/, '')
