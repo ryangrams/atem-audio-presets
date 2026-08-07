@@ -21,9 +21,8 @@ const LEVEL = { 0: '', 1: 'Mic', 2: 'Consumer', 4: 'Pro line' }
 /** localStorage namespace — one place, so the stored keys track the app name. */
 const LS = 'atem-audio-presets'
 
-// Where the "buy me a coffee" link points. Empty means there is nowhere to send people yet, and
-// the link removes itself rather than shipping as a dead ☕.
-const SUPPORT_URL = ''
+// Where the support link points. Empty removes the link rather than shipping a dead ☕.
+const SUPPORT_URL = 'https://github.com/sponsors/ryangrams'
 
 // A column holds either a switcher or the preset library. Only one side can be the library at a
 // time, which is what makes preset-into-preset impossible rather than merely disallowed.
