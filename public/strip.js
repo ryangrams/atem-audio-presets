@@ -300,6 +300,18 @@ const fHz = (v) => (v >= 1000 ? `${(v / 1000).toFixed(2).replace(/\.?0+$/, '')}k
 const panText = (v) => (v === 0 ? 'C' : `${v > 0 ? 'R' : 'L'}${Math.abs(v / 100).toFixed(0)}`)
 
 /**
+ * ATEM's own strips carry short, all-caps labels on the hardware and in the compact Fairlight
+ * view — "CAM 1", "MIC 1", "MP 1" — not the fuller names the audio-in list shows. This mirrors
+ * that convention rather than showing the long label, which the title attribute still carries.
+ */
+const SHORT_WORD = { CAMERA: 'CAM', MICROPHONE: 'MIC', 'MEDIA PLAYER': 'MP', PLAYER: 'PLR', OVERHEAD: 'OVHD', LECTERN: 'LECT', WIRELESS: 'WL' }
+function shortLabel(label) {
+	let s = String(label ?? '').toUpperCase()
+	for (const [word, abbr] of Object.entries(SHORT_WORD)) s = s.replace(word, abbr)
+	return s.length > 10 ? s.slice(0, 10) : s
+}
+
+/**
  * Render one channel. `d` is an /api/channel payload.
  *
  * opts.sections  which sections are part of the copy
@@ -331,22 +343,31 @@ function renderStripCard(box, d, opts = {}) {
 	const was = (name, current, next, fmt) =>
 		!opts.source && inc && sec[name] && current !== next ? `<em class="was">was ${fmt(current)}</em>` : ''
 
+	// On the source card a block *is* the checkbox, so it has to be one to a keyboard and a screen
+	// reader too. On the destination card nothing is announced unless it is actually changing.
+	const a11y = (name, label) => {
+		if (opts.source)
+			return ` role="checkbox" tabindex="0" aria-checked="${sec[name] ? 'true' : 'false'}" aria-label="${label}, ${sec[name] ? 'included in the copy' : 'left out of the copy'}"`
+		if (inc && sec[name]) return ` aria-label="${label}, showing the incoming values — this will be replaced"`
+		return ''
+	}
+
 	const strip = `<div class="strip">
-		<div class="strip-name">${d.meta.label}</div>
-		<div class="ctrl block${cls('gain')}" data-sec="gain">
+		<div class="strip-name" title="${d.meta.label}">${shortLabel(d.meta.label)}</div>
+		<div class="ctrl block${cls('gain')}" data-sec="gain"${a11y('gain', 'Gain')}>
 			<b>Gain</b>
 			${knob(((gainL.gain ?? 0) / 100 + 60) / 66, 0, '#3ec97a')}
 			<span class="val">${fdB(gainL.gain)}</span><em>dB</em>
 			${was('gain', now.gain, gainL.gain, fdB)}
 			<div class="delay ${gainL.framesDelay ? 'on' : ''}">⇢ ${gainL.framesDelay ?? 0} frame${gainL.framesDelay === 1 ? '' : 's'}</div>
 		</div>
-		<div class="ctrl block${cls('volume')}" data-sec="volume">
+		<div class="ctrl block${cls('volume')}" data-sec="volume"${a11y('volume', 'Volume')}>
 			<b>Volume</b>
 			${fader((volL.faderGain ?? 0) / 100)}
 			<span class="val">${fdB(volL.faderGain)}</span><em>dB</em>
 			${was('volume', now.faderGain, volL.faderGain, fdB)}
 		</div>
-		<div class="ctrl block${cls('pan')}" data-sec="pan">
+		<div class="ctrl block${cls('pan')}" data-sec="pan"${a11y('pan', 'Pan')}>
 			<b>Pan</b>
 			${knob(((panL.balance ?? 0) + 10000) / 20000, 0.5, '#4a90d9')}
 			<span class="val">${panText(panL.balance ?? 0)}</span><em>L – R</em>
@@ -402,18 +423,18 @@ function renderStripCard(box, d, opts = {}) {
 	box.innerHTML = `<div class="stripcard${opts.source ? ' selectable' : ''}">
 		<div class="stripwrap">${strip}</div>
 		<div class="graphs">
-			<div class="gblock block${cls('eq')}" data-sec="eq">
+			<div class="gblock block${cls('eq')}" data-sec="eq"${a11y('eq', 'Equalizer')}>
 				<div class="glabel">Equalizer ${eq?.enabled ? '' : '<span class="byp">bypassed</span>'}<span class="gval">${eq?.gain ? `${eq.gain > 0 ? '+' : ''}${fdB(eq.gain)} dB` : ''}</span></div>
 				${eqGraph(eq, eqGhost)}
 				<div class="bands">${bands}</div>
 			</div>
-			<div class="gblock block${cls('dynamics')}" data-sec="dynamics">
+			<div class="gblock block${cls('dynamics')}" data-sec="dynamics"${a11y('dynamics', 'Dynamics')}>
 				<div class="glabel">Dynamics<span class="gval">in → out dB</span></div>
 				<div class="dynrow">${dynamicsGraph(dyn, dynGhost)}${makeUpFader(dyn.makeUpGain ?? 0)}<div class="units">${dynUnits}</div></div>
 			</div>
-			<div class="gblock block${cls('inputConfig')}" data-sec="inputConfig">
+			<div class="gblock block${cls('inputConfig')}" data-sec="inputConfig"${a11y('inputConfig', 'Input configuration')}>
 				<div class="glabel">Input</div>
-				${inputConfig(cfg, d.meta)}
+				${inputConfig(cfg, d.meta, Boolean(opts.incoming) && sec.inputConfig)}
 			</div>
 		</div>
 	</div>`
@@ -429,7 +450,7 @@ const LEVEL_NAME = { 1: 'Mic', 2: 'Consumer', 4: 'Pro line' }
  * input actually supports are shown — a camera input has no mic/line choice, and offering one
  * would imply a setting that does not exist.
  */
-function inputConfig(shown, own) {
+function inputConfig(shown, own, incoming) {
 	const row = (label, options, active, names) => {
 		if (!options?.length) return ''
 		return `<div class="cfgrow"><em>${label}</em><div class="segs">${options
@@ -438,7 +459,14 @@ function inputConfig(shown, own) {
 	}
 	const layout = row('Channels', own.supportedConfigurations, shown.configuration, CONFIG_NAME)
 	const level = row('Level', own.supportedInputLevels, shown.inputLevel, LEVEL_NAME)
-	if (!layout && !level) return '<div class="cfgnone">Fixed — nothing to configure on this input.</div>'
+	if (!layout && !level) {
+		// The block can be ticked while the destination has no such setting at all — a camera input
+		// cannot be told it is a microphone. Say that, rather than leaving a green outline next to a
+		// line claiming there is nothing here.
+		return incoming
+			? '<div class="cfgnone">This input has no channel or level setting, so the wiring cannot be copied onto it. Everything else still copies.</div>'
+			: '<div class="cfgnone">Fixed — nothing to configure on this input.</div>'
+	}
 	return `<div class="cfg">${layout}${level}</div>`
 }
 
@@ -460,3 +488,29 @@ function makeUpFader(makeUpGain) {
 
 window.renderStripCard = renderStripCard
 window.SHAPE_NAME = SHAPE_NAME
+window.shortLabel = shortLabel
+
+/**
+ * A small picture of one preset's EQ response — the library's thumbnail. Same maths as the big
+ * curve, so the thumbnail is real data rather than an icon pretending to be.
+ */
+/**
+ * A preset's EQ as a thumbnail.
+ *
+ * Scaled to ±8 dB rather than the card's ±15: a mic chain rarely moves more than three or four, so
+ * the wider range flattened every curve into the same straight line. Anything beyond ±8 clamps,
+ * which reads as "a lot" — the point of a thumbnail is to tell two presets apart at a glance.
+ */
+function eqSparkline(eq, w = 52, h = 28) {
+	const live = eqLive(eq)
+	const pts = []
+	const span = 8
+	for (let i = 0; i <= 56; i++) {
+		const f = F_MIN * Math.pow(F_MAX / F_MIN, i / 56)
+		const db = live ? eqResponseAt(eq, f) : 0
+		const y = h / 2 - (Math.max(-span, Math.min(span, db)) / span) * (h / 2 - 2.5)
+		pts.push(`${i ? 'L' : 'M'}${((i / 56) * w).toFixed(1)} ${y.toFixed(1)}`)
+	}
+	return `<svg class="spark" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true"><line class="sz" x1="0" y1="${h / 2}" x2="${w}" y2="${h / 2}" /><path class="sl${live ? '' : ' off'}" d="${pts.join(' ')}" /></svg>`
+}
+window.eqSparkline = eqSparkline

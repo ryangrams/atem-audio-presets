@@ -21,14 +21,41 @@ const LEVEL = { 0: '', 1: 'Mic', 2: 'Consumer', 4: 'Pro line' }
 /** localStorage namespace — one place, so the stored keys track the app name. */
 const LS = 'atem-audio-presets'
 
-// Where the support link points. Empty removes the link rather than shipping a dead ☕.
+// Where the support link points. Empty removes the link rather than shipping a dead link.
 const SUPPORT_URL = 'https://github.com/sponsors/ryangrams'
+
+// ⌘ on a Mac, Ctrl everywhere else. A hint that names the wrong key is worse than no hint.
+const IS_MAC = /mac/i.test(navigator.platform || navigator.userAgent)
+const MOD = IS_MAC ? '⌘' : 'Ctrl'
+
+/** Addresses that have connected before — typing one in is this app's first and highest hurdle. */
+const recentIps = () => {
+	try {
+		return JSON.parse(localStorage.getItem(`${LS}.recent`) ?? '[]')
+	} catch {
+		return []
+	}
+}
+
+/** One place for the words a section is called, so the card, summary and outcome agree. */
+const SECTION_NAMES = { gain: 'Gain', volume: 'Volume', pan: 'Pan', eq: 'EQ', dynamics: 'Dynamics', inputConfig: 'Input' }
+
+/** The community front door — shared presets, help, and the people doing the same job. */
+const LOOP_URL = 'https://loop.studioupgrade.com'
+
+/** A short controlled vocabulary keeps the library scannable; free text is still allowed. */
+const PRESET_STYLES = ['Broadcast voice', 'Podcast', 'Speech clarity', 'Live vocal', 'Lav / headset', 'Music', 'Safety net', 'Utility']
+
+/** Mics people actually plug into ATEMs, as suggestions for the save form. */
+const COMMON_MICS = ['Shure SM7B', 'Shure SM58', 'Shure MV7', 'Rode PodMic', 'Rode NT1', 'Rode Wireless GO II', 'Audio-Technica AT2020', 'Sennheiser e835', 'Sennheiser MKE 600', 'DPA 4066 headset', 'Behringer XM8500']
 
 // A column holds either a switcher or the preset library. Only one side can be the library at a
 // time, which is what makes preset-into-preset impossible rather than merely disallowed.
 const state = {
-	A: { kind: localStorage.getItem(`${LS}.kind.A`) ?? 'atem', ip: '', device: null, channels: [], selection: [], anchor: null, detail: null, showMinor: false, multi: false },
-	B: { kind: localStorage.getItem(`${LS}.kind.B`) ?? 'atem', ip: '', device: null, channels: [], selection: [], anchor: null, detail: null, showMinor: false, multi: true },
+	// `error` holds the last failed connect for that column, so the card area can explain it
+	// instead of leaving a raw string beside a red dot.
+	A: { kind: localStorage.getItem(`${LS}.kind.A`) ?? 'atem', ip: '', device: null, channels: [], selection: [], anchor: null, detail: null, error: null, showMinor: false, multi: false },
+	B: { kind: localStorage.getItem(`${LS}.kind.B`) ?? 'atem', ip: '', device: null, channels: [], selection: [], anchor: null, detail: null, error: null, showMinor: false, multi: true },
 	library: { presets: [], selectedFile: null, cache: {} },
 	// One switcher is the default: both lists show the same box and a copy moves settings
 	// between its channels. Adding a second switcher splits them apart.
@@ -76,6 +103,88 @@ async function api(path, options) {
  * immediately without ever showing anything, so a destructive action silently does nothing.
  * This never relies on the host's dialogs.
  */
+/**
+ * An inline "are you sure" in the same bar slot the blend controls use — not a lightbox. The copy is
+ * about to be visible on the destination card anyway, so the bar only needs to name the action and
+ * offer the two buttons; the card below is the detail.
+ */
+function askBar(title, note, confirmLabel = 'Confirm') {
+	return new Promise((resolve) => {
+		const bar = $('#confirmbar')
+		const done = (v) => {
+			bar.hidden = true
+			bar.textContent = ''
+			document.removeEventListener('keydown', onKey)
+			resolve(v)
+		}
+		const onKey = (e) => {
+			if (e.key === 'Escape') done(false)
+			if (e.key === 'Enter') done(true)
+		}
+		bar.hidden = false
+		bar.innerHTML = `
+			<div class="blendfoot">
+				<span class="blendnote"><b class="confirmtitle">${esc(title)}</b>${note ? ` ${esc(note)}` : ''}</span>
+				<div class="blendacts"><button class="blendcancel">Cancel</button><button class="primary blendgo">${esc(confirmLabel)}</button></div>
+				<span class="blendfootpad"></span>
+			</div>`
+		bar.querySelector('.blendcancel').onclick = () => done(false)
+		bar.querySelector('.blendgo').onclick = () => done(true)
+		bar.querySelector('.blendgo').focus()
+		document.addEventListener('keydown', onKey)
+	})
+}
+
+let tourDemo = null // the real state, parked while the tour's sample switcher is on screen
+
+/**
+ * Abandon the sample without restoring anything — for when a real connection arrives while the
+ * sample is on screen. The real channels are about to be written over the top, so the parked state
+ * is irrelevant; all that matters is that no sample marking survives to disable the write buttons.
+ */
+function dropSample() {
+	tourDemo = null
+	for (const side of ['A', 'B']) panel(side).classList.remove('sample')
+	document.body.classList.remove('sample-on')
+	removeGhost()
+	Tips.hide()
+}
+
+/**
+ * A failure the user has to acknowledge, as a lightbox.
+ *
+ * Reserved for things that stopped working — a request that never ran, a file that would not load.
+ * Measured outcomes (a copy that wrote and read back) belong in the outcome band instead; this is
+ * for the cases where there is no result to report.
+ */
+function showError(title, message) {
+	const overlay = el('div', 'modal-overlay')
+	const box = el('div', 'modal modal-err')
+	box.append(el('h3', null, title))
+	const detail = el('div', 'modal-detail')
+	detail.innerHTML = `<p>${esc(message)}</p>`
+	box.append(detail)
+	const actions = el('div', 'modal-actions')
+	const ok = el('button', 'primary', 'Close')
+	actions.append(ok)
+	box.append(actions)
+	overlay.append(box)
+	document.body.append(overlay)
+	ok.focus()
+	const done = () => {
+		document.removeEventListener('keydown', onKey)
+		overlay.remove()
+	}
+	const onKey = (e) => {
+		if (e.key === 'Escape' || e.key === 'Enter') done()
+	}
+	document.addEventListener('keydown', onKey)
+	ok.onclick = done
+	overlay.onclick = (e) => {
+		if (e.target === overlay) done()
+	}
+}
+
 function askConfirm(title, detailHtml, confirmLabel = 'Confirm') {
 	return new Promise((resolve) => {
 		const overlay = el('div', 'modal-overlay')
@@ -123,11 +232,13 @@ function log(html, cls) {
 function clearLog() {
 	$('#log').textContent = ''
 }
-/** The result lives in a collapsible drawer — open it and scroll to the top of the newest entry. */
+/**
+ * The blow-by-blow lives in a collapsible drawer. The headline does not: it goes in the outcome
+ * banner above the status bar, where the user is already looking. This just opens the drawer.
+ */
 function showResult() {
-	const drawer = $('#drawer-log')
-	if (drawer) drawer.open = true
-	$('#log')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+	const box = $('#logbox')
+	if (box) box.hidden = false
 }
 const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c])
 
@@ -165,10 +276,31 @@ function diffTable(diff) {
 // ------------------------------------------------------------------ switchers
 
 async function connectSide(side) {
+	// Two-switcher mode is not a mode the user has to find — it is simply what happens when the
+	// destination points somewhere else. Connecting the destination to its own address turns it on;
+	// pointing it back at the source's address turns it off again.
+	if (side === 'B' && !state.two) {
+		const bIp = panel('B').querySelector('.ip').value.trim()
+		const aIp = panel('A').querySelector('.ip').value.trim()
+		if (bIp && bIp !== aIp) {
+			state.two = true
+			applyMode()
+		} else {
+			return connectSingle()
+		}
+	} else if (side === 'A' && state.two) {
+		const bIp = panel('B').querySelector('.ip').value.trim()
+		if (bIp && bIp === panel('A').querySelector('.ip').value.trim()) {
+			state.two = false
+			applyMode()
+			return connectSingle()
+		}
+	}
 	if (!state.two) return connectSingle()
 	const s = state[side]
 	s.ip = panel(side).querySelector('.ip').value.trim()
 	if (!s.ip) return
+	if (tourDemo) dropSample()
 	localStorage.setItem(`${LS}.ip.${side}`, s.ip)
 	const dev = panel(side).querySelector('.device')
 	dev.innerHTML = `Connecting to ${esc(s.ip)}…`
@@ -179,13 +311,23 @@ async function connectSide(side) {
 		s.selection = []
 		s.anchor = null
 		s.detail = null
+		s.error = null
+		rememberIp(s.ip)
 		dev.innerHTML = deviceLine(body.device)
 		renderChannels(side)
 		renderDetail(side)
 		log(`Connected to ${esc(s.ip)} — ${body.channels.length} audio strips.`, 'ok')
+		// Each column's own device row already says it is connected — no need to repeat it below.
+		setStatus('')
 	} catch (e) {
-		dev.innerHTML = `<span class="err">●</span> ${esc(e.message)}`
+		s.channels = []
+		s.detail = null
+		s.error = { ip: s.ip, message: e.message }
+		dev.innerHTML = '<span class="err">●</span> Not connected'
+		renderChannels(side)
+		renderDetail(side)
 		log(`Connect failed for ${esc(s.ip)}: ${esc(e.message)}`, 'err')
+		setStatus(`Could not reach ${s.ip}`, 'err')
 	}
 }
 
@@ -203,18 +345,21 @@ function applyMode() {
 	for (const side of ['A', 'B']) {
 		const p = panel(side)
 		p.classList.toggle('lib', isLib(side))
-		for (const btn of p.querySelectorAll('.kind')) btn.classList.toggle('on', btn.dataset.kind === state[side].kind)
+		for (const btn of p.querySelectorAll('.kind')) {
+			const on = btn.dataset.kind === state[side].kind
+			btn.classList.toggle('on', on)
+			btn.setAttribute('aria-pressed', on ? 'true' : 'false')
+		}
 	}
-	$('#mode-toggle').textContent = state.two ? 'Use one switcher' : 'Add second switcher'
 	// Same controls in both modes; on one switcher the destination column simply follows the
 	// source's address instead of taking its own.
 	const bIp = panel('B').querySelector('.ip')
 	const bConnect = panel('B').querySelector('.connect')
-	bIp.disabled = !state.two
-	bConnect.disabled = !state.two
+	bIp.disabled = false
+	bConnect.disabled = false
 	if (!state.two) bIp.value = panel('A').querySelector('.ip').value
-	bIp.title = state.two ? '' : 'Same switcher — press “Add second switcher” to copy across two'
-	const bTitle = panel('B').querySelector('.col-title')
+	bIp.title = state.two ? '' : 'Same switcher — enter a different address to copy across two'
+	const bTitle = $('#title-B')
 	bTitle.textContent = 'Destination'
 	bTitle.title = isLib('B')
 		? 'Saving into the preset library'
@@ -224,6 +369,7 @@ function applyMode() {
 	const snapA = $('#snapshot-A')
 	if (snapA) snapA.textContent = state.two ? 'Snapshot (from)' : 'Download snapshot'
 	localStorage.setItem(`${LS}.two`, state.two ? '1' : '0')
+	renderRecent()
 	updateSummary()
 	updateActionUI()
 }
@@ -232,11 +378,15 @@ function applyMode() {
 async function connectSingle() {
 	const ip = panel('A').querySelector('.ip').value.trim()
 	if (!ip) return
+	// A real switcher always wins over the tour's sample — otherwise the sample's disabled buttons and
+	// "not real" badges would be inherited by a live connection.
+	if (tourDemo) dropSample()
 	localStorage.setItem(`${LS}.ip.A`, ip)
 	const dev = panel('A').querySelector('.device')
 	dev.innerHTML = `Connecting to ${esc(ip)}\u2026`
 	try {
 		const body = await api(`/api/switcher?ip=${encodeURIComponent(ip)}`)
+		rememberIp(ip)
 		for (const side of ['A', 'B']) {
 			const s = state[side]
 			s.ip = ip
@@ -245,6 +395,7 @@ async function connectSingle() {
 			s.selection = []
 			s.anchor = null
 			s.detail = null
+			s.error = null
 			panel(side).querySelector('.ip').value = ip
 			panel(side).querySelector('.device').innerHTML = deviceLine(body.device)
 			if (isLib(side)) {
@@ -255,9 +406,16 @@ async function connectSingle() {
 			renderSideAll(side)
 		}
 		log(`Connected to ${esc(ip)} \u2014 ${body.channels.length} audio strips.`, 'ok')
-		setStatus(`Connected \u2014 ${body.channels.length} audio strips`, 'ok')
+		setStatus('')
 	} catch (e) {
-		dev.innerHTML = `<span class="err">\u25cf</span> ${esc(e.message)}`
+		dev.innerHTML = '<span class="err">\u25cf</span> Not connected'
+		for (const side of ['A', 'B']) {
+			const s = state[side]
+			s.channels = []
+			s.detail = null
+			s.error = { ip, message: e.message }
+			if (!isLib(side)) renderSideAll(side)
+		}
 		log(`Connect failed for ${esc(ip)}: ${esc(e.message)}`, 'err')
 		setStatus(`Could not reach ${ip}`, 'err')
 	}
@@ -291,6 +449,7 @@ function renderSideAll(side) {
  */
 function setKind(side, kind) {
 	if (state[side].kind === kind) return
+	if (side === 'B' && kind === 'library') closeBlend()
 	const other = side === 'A' ? 'B' : 'A'
 	state[side].kind = kind
 	if (kind === 'library' && state[other].kind === 'library') {
@@ -319,11 +478,7 @@ function renderLibrary(side) {
 	panel(side).querySelector('.libfoot')?.remove()
 
 	const presets = state.library.presets.filter((p) => p.format !== 'atem-audio-snapshot')
-	if (!presets.length) {
-		list.innerHTML =
-			'<div class="libempty">No presets yet.<br />Put the library on the right and save a channel into it.</div>'
-		return
-	}
+	if (!presets.length) return renderLibraryEmpty(side, list)
 
 	const groups = [...new Set(presets.map((p) => p.group || ''))].sort((a, b) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b)))
 	for (const g of groups) {
@@ -346,18 +501,28 @@ function renderLibrary(side) {
 			const row = el('div', `chan preset-row${state.library.selectedFile === p.file ? ' selected' : ''}`)
 			row.draggable = true
 			row.dataset.file = p.file
+			row.setAttribute('role', 'option')
+			row.setAttribute('aria-selected', state.library.selectedFile === p.file ? 'true' : 'false')
+			row.tabIndex = 0
+			row.dataset.key = p.file
+			// The thumbnail is the preset's own EQ curve — real data, not an icon standing in for it.
+			const spark = el('span', 'pspark')
+			row.append(spark)
+			paintSpark(p.file, spark)
+			const words = el('div', 'pwords')
 			const name = el('span', 'name', p.name)
 			name.title =
-				`Double-click to rename\n${p.meta?.label ?? 'channel'}` +
-				`${p.device?.ip ? ` from ${p.device.ip}` : ''}` +
+				`Double-click to rename\n${[p.mic, p.style].filter(Boolean).join(' \u00b7 ') || (p.meta?.label ?? 'channel')}` +
 				`${p.savedAt ? `\n${new Date(p.savedAt).toLocaleString()}` : ''}`
 			name.ondblclick = (e) => {
 				e.stopPropagation()
 				renamePreset(p, name)
 			}
-			row.append(name)
+			words.append(name)
+			const bits = [p.mic, p.style].filter(Boolean).join(' \u00b7 ')
+			if (bits) words.append(el('span', 'pmeta2', bits))
+			row.append(words)
 			const tags = el('div', 'tags')
-			tags.append(el('span', `tag${p.summary?.eqActive ? ' on' : ''}`, 'EQ'))
 			tags.append(el('span', `tag${p.summary?.dynActive ? ' on' : ''}`, 'DYN'))
 			row.append(tags)
 			const del = el('button', 'rowbtn', '×')
@@ -386,13 +551,14 @@ function renderLibrary(side) {
 	}
 
 	// Whole-library export and import, always reachable — groups are optional, so these cannot
-	// live only on group headers.
+	// live only on group headers. Browsing lives on the header's Community presets button, so it is
+	// deliberately not repeated down here.
 	const foot = el('div', 'libfoot')
-	const all = el('button', null, `Export all ${presets.length}\u2026`)
+	const all = el('button', null, `Export all ${presets.length}`)
 	all.title = 'Bundle every preset into one shareable pack'
 	all.onclick = () => exportPack({ name: 'ATEM audio presets' })
 	foot.append(all)
-	const imp = el('label', 'filebtn small', 'Import\u2026')
+	const imp = el('label', 'filebtn small', 'Import a pack')
 	const inp = el('input')
 	inp.type = 'file'
 	inp.accept = 'application/json'
@@ -499,8 +665,15 @@ function renderChannels(side) {
 	const list = panel(side).querySelector('.channel-list')
 	list.textContent = ''
 	const visible = s.channels.filter((c) => s.showMinor || !c.minor)
+	// Roving tabindex: the list is one tab stop, and the arrow keys move inside it.
+	const focusKey = s.selection[s.selection.length - 1] ?? visible[0]?.key
 	for (const c of visible) {
-		const row = el('div', `chan${c.minor ? ' minor' : ''}${s.selection.includes(c.key) ? ' selected' : ''}`)
+		const on = s.selection.includes(c.key)
+		const row = el('div', `chan${c.minor ? ' minor' : ''}${on ? ' selected' : ''}`)
+		row.dataset.key = c.key
+		row.setAttribute('role', 'option')
+		row.setAttribute('aria-selected', on ? 'true' : 'false')
+		row.tabIndex = c.key === focusKey ? 0 : -1
 		row.append(el('span', 'id', `${c.inputId}${c.leg ? ` ${c.leg}` : ''}`))
 		row.append(el('span', 'name', c.label))
 		const tags = el('div', 'tags')
@@ -515,12 +688,16 @@ function renderChannels(side) {
 	panel(side).querySelector('.libfoot')?.remove()
 	const hidden = s.channels.filter((c) => c.minor).length
 	if (hidden > 0) {
-		const btn = el('button', 'toggle-minor', s.showMinor ? `Hide ${hidden} MADI strips` : `Show ${hidden} MADI strips`)
+		const btn = el('button', 'toggle-minor')
+		btn.setAttribute('aria-expanded', String(Boolean(s.showMinor)))
+		btn.innerHTML = `<span class="chev" aria-hidden="true">▾</span><span>${s.showMinor ? `Hide ${hidden} MADI strips` : `Show ${hidden} MADI strips`}</span>`
 		btn.onclick = () => {
 			s.showMinor = !s.showMinor
 			renderChannels(side)
 		}
-		list.after(btn)
+		// Inside the list, as its last row — it expands the channels above it, so it belongs to them
+		// rather than sitting under the whole column.
+		list.append(btn)
 	}
 }
 
@@ -572,6 +749,11 @@ async function loadDetail(side, key) {
 		log(`Could not read ${esc(key)}: ${esc(e.message)}`, 'err')
 	}
 	renderDetail(side)
+	// The save card on a library destination previews this channel — keep it following along.
+	if (side === 'A' && isLib('B')) renderDetail('B')
+	// Copy and Blend depend on a source channel actually being loaded, which only becomes true
+	// here — the click that started this read happened a request ago.
+	updateActionUI()
 }
 
 /** On the destination side, say plainly how many strips a copy will land on. */
@@ -602,20 +784,24 @@ function renderDetail(side) {
 
 	const d = state[side].detail
 	if (!d) {
-		box.innerHTML = `<span class="off">${
-			isLib(side)
-				? 'Pick a preset on the left.'
-				: `Select a channel${state[side].multi ? ' \u2014 \u2318-click or shift-click for several' : ''}.`
-		}</span>`
+		renderEmptyCard(side, box)
 		updateActionUI()
+		renderCardHint(side)
 		return
 	}
-	renderStripCard(box, d, {
+	const cardBox = el('div')
+	box.append(cardBox)
+	renderStripCard(cardBox, d, {
 		sections: state.sections,
-		// The source card is where sections are picked; the destination card previews the result.
+		// The source card is where sections are picked; the destination card previews the result —
+		// the blend ratio when the blend bar is open, otherwise a straight incoming copy.
 		source: side === 'A',
-		incoming: side === 'B' ? sourceChannel() : null,
+		incoming: side === 'B' ? (blendOpen ? blendPreviewFor(d) : sourceChannel()) : null,
 	})
+	// A preset is more than its numbers — say what it was made with and for. It sits under the card:
+	// the settings are what the user came to read, the provenance is what they check afterwards.
+	if (isLib(side) && currentPreset()) box.append(presetHead(currentPreset()))
+	renderCardHint(side)
 	updateActionUI()
 }
 
@@ -638,11 +824,21 @@ function renderSaveCard(box) {
 			<input type="text" id="np-group" list="np-groups" placeholder="Group (optional)" value="${esc(over?.group ?? '')}" />
 			<datalist id="np-groups">${groups.map((g) => `<option value="${esc(g)}"></option>`).join('')}</datalist>
 		</div>
+		<div class="saverow">
+			<input type="text" id="np-mic" list="np-mics" placeholder="Mic or source \u2014 Shure SM7B, lectern gooseneck\u2026" value="${esc(over?.mic ?? '')}" />
+			<input type="text" id="np-style" list="np-styles" placeholder="Style \u2014 Podcast, Live vocal\u2026" value="${esc(over?.style ?? '')}" />
+			<datalist id="np-mics">${COMMON_MICS.map((m) => `<option value="${esc(m)}"></option>`).join('')}</datalist>
+			<datalist id="np-styles">${PRESET_STYLES.map((s) => `<option value="${esc(s)}"></option>`).join('')}</datalist>
+		</div>
+		<div class="saverow">
+			<input type="text" id="np-notes" placeholder="Notes \u2014 what it suits, what to tweak by ear" value="${esc(over?.notes ?? '')}" />
+			<input type="text" id="np-sample" class="half" placeholder="Link to a sample (optional)" value="${esc(over?.sampleUrl ?? '')}" />
+		</div>
 		<div class="savenote">${
 			over
 				? `Overwrites <b>${esc(over.name)}</b> \u2014 the old version is kept in presets/_backups/.`
 				: 'Saves a new preset.'
-		} Stores the whole channel; ticked sections (${esc(on.join(', ') || 'none')}) become its defaults.</div>
+		} Stores the whole channel; ticked sections (${esc(on.join(', ') || 'none')}) become its defaults. Mic and style are how other people will find it \u2014 good ones are worth <a href="${LOOP_URL}" target="_blank" rel="noreferrer">sharing with the community</a> as a pack.</div>
 		<div class="savepreview"></div>
 	</div>`
 
@@ -654,29 +850,86 @@ function renderSaveCard(box) {
 	updateActionUI()
 }
 
-/** The big button and Undo say what they will actually do, which depends on both columns. */
+/**
+ * The big button and Undo say what they will actually do, which depends on both columns.
+ *
+ * A button that cannot work is disabled rather than left clickable to throw an error — under time
+ * pressure, a dead button that explains itself on hover beats a dialog that has to be dismissed.
+ */
 function updateActionUI() {
 	const btn = $('#apply')
 	if (!btn) return
+	const anySection = Object.values(state.sections).some(Boolean)
+	// The sample switcher exists to be looked at. Nothing may be written to it — there is nothing
+	// there to write to.
+	if (tourDemo) {
+		btn.textContent = 'Copy →'
+		btn.disabled = true
+		btn.title = 'This is a sample switcher — connect your own to copy for real'
+		const blend = $('#blend')
+		blend.disabled = true
+		blend.title = btn.title
+		$('#undo').disabled = true
+		$('#redo').disabled = true
+		const swapBtn = $('#swap')
+		if (swapBtn) swapBtn.style.display = 'none'
+		return
+	}
+	$('#undo').disabled = false
 	if (isLib('B')) {
 		const over = currentPreset()
 		btn.textContent = over ? `Overwrite \u201c${over.name}\u201d` : 'Save preset'
 		btn.disabled = !sourceChannel()
+		btn.title = btn.disabled ? 'Pick a channel on the left to save as a preset' : ''
 	} else {
 		const n = selectedKeys('B').length
 		btn.textContent = n > 1 ? `Copy \u2192 ${n} channels` : 'Copy \u2192'
-		btn.disabled = false
+		const why = !sourceChannel() ? (isLib('A') ? 'Pick a preset on the left to copy from' : 'Pick a channel on the left to copy from') : !n ? 'Pick one or more channels on the right to copy onto' : !anySection ? 'Click at least one block on the left-hand card — Gain, EQ, Dynamics — to say what travels' : ''
+		btn.disabled = Boolean(why)
+		btn.title = why
 	}
 	$('#undo').style.display = isLib('B') ? 'none' : ''
-	$('#swap').style.display = isLib('A') || isLib('B') || !state.two ? 'none' : ''
+	$('#redo').style.display = isLib('B') ? 'none' : ''
+	const blendBtn = $('#blend')
+	blendBtn.style.display = isLib('B') ? 'none' : ''
+	// A blend mixes against each destination's own values, so several destinations give several
+	// different results — and the preview card can only show one of them. One at a time.
+	const dests = selectedKeys('B')
+	const blendWhy = isLib('B')
+		? ''
+		: !sourceChannel()
+			? isLib('A')
+				? 'Pick a preset on the left to blend from'
+				: 'Pick a channel on the left to blend from'
+			: dests.length > 1
+				? 'Blend works on one destination channel at a time — the mix depends on what is already there'
+				: !dests.length
+					? 'Pick the destination channel to blend with'
+					: !anySection
+						? 'Click at least one block on the left-hand card to say what blends'
+						: ''
+	blendBtn.disabled = Boolean(blendWhy)
+	blendBtn.title = blendWhy || "Mix the source with each destination's own settings, by how much you choose"
+	if (blendWhy) closeBlend()
+	// Swapping only means something with two switchers connected; it lives beside the library button
+	// now that the footer is brand and actions only.
+	const swap = $('#swap')
+	if (swap) swap.style.display = isLib('A') || isLib('B') || !state.two ? 'none' : ''
 }
 
-/** The right-hand half of the status bar: the outcome of the last thing that happened. */
+/**
+ * A short message about the action just attempted.
+ *
+ * Warnings and failures surface as notifications now, so they cannot be missed at the bottom of the
+ * window; the hidden status element stays for assistive technology and for clearing.
+ */
 function setStatus(text, cls) {
 	const box = $('#status')
-	if (!box) return
-	box.className = `status${cls ? ' ' + cls : ''}`
-	box.textContent = text
+	if (box) {
+		box.className = `status${cls ? ' ' + cls : ''}`
+		box.textContent = text
+	}
+	if (text && (cls === 'warn' || cls === 'err')) notify(cls, text)
 }
 
 /** The left-hand half of the status bar: what is about to go where. */
@@ -752,9 +1005,15 @@ function payloadRef() {
 	return { from: { ip: s.ip, input: c.inputId, source: c.sourceId }, describe: `${s.ip} ${c.label}` }
 }
 
+/** The last successful copy, kept so Redo can replay it after an Undo. Invalidated by any new copy. */
+let lastApply = null
+
 async function apply() {
 	// Destination decides the verb: a switcher gets a copy, the library gets a save.
 	if (isLib('B')) return savePresetFlow()
+	// A plain copy replaces outright — it is not a blend, so leave blend mode rather than let the
+	// bar sit open over a preview that no longer describes what just happened.
+	closeBlend()
 	let to, src
 	try {
 		to = destinations()
@@ -777,17 +1036,21 @@ async function apply() {
 	} catch {
 		/* preview is a courtesy — if it fails, still offer the copy */
 	}
-	const ok = await askConfirm(
-		to.length === 1 ? 'Copy audio settings?' : `Copy audio settings onto ${to.length} channels?`,
-		`<p><strong>${esc(src.describe)}</strong><br />→ <strong>${esc(to[0].ip)}</strong></p>` +
-			`<ul class="modal-list">${to.map((t) => `<li>${esc(describeTarget(t))}</li>`).join('')}</ul>` +
-			`<p>Sections: ${esc(list.join(', '))}${changes === null ? '' : ` · <strong>${changes}</strong> field${changes === 1 ? '' : 's'} will change`}</p>` +
-			`<p class="muted">Every destination channel is backed up first, and Undo restores the whole batch.</p>`,
+	const ok = await askBar(
+		to.length === 1 ? `Copy onto ${to[0].label}?` : `Copy onto ${to.length} channels?`,
+		`${list.join(', ')}${changes === null ? '' : ` · ${changes} field${changes === 1 ? '' : 's'} change`} · every destination is backed up first.`,
 		to.length === 1 ? 'Copy' : `Copy to ${to.length}`
 	)
 	if (!ok) return
+	await performCopy(src, to, list)
+}
 
+/** Sends one copy and reports the outcome — shared by a confirmed Copy and by Redo, which replays
+ *  the same request without asking again (it already asked, the first time). */
+async function performCopy(src, to, list) {
+	hideOutcome()
 	$('#apply').disabled = true
+	const endProgress = showProgress(to, to.length === 1 ? `Copying onto ${to[0].label}` : `Copying onto ${to.length} channels`)
 	try {
 		const body = await api('/api/apply', { method: 'POST', body: JSON.stringify({ ...src, to, sections: sections() }) })
 		clearLog()
@@ -812,17 +1075,275 @@ async function apply() {
 			for (const w of r.warnings) log(`⚠ ${esc(r.label)}: ${esc(w)}`, 'warn')
 		}
 		const good = body.results.filter((r) => r.ok && !r.remaining?.length).length
+		const failed = body.results.filter((r) => !r.ok)
+		const clamped = body.results.filter((r) => r.ok && r.remaining?.length)
+		const n = body.results.length
 		log(
-			`<strong>Copied</strong> ${esc(src.describe)} → ${esc(to[0].ip)}: ${good}/${body.results.length} channel${body.results.length === 1 ? '' : 's'} verified.`,
-			good === body.results.length ? 'ok' : 'warn'
+			`<strong>Copied</strong> ${esc(src.describe)} → ${esc(to[0].ip)}: ${good}/${n} channel${n === 1 ? '' : 's'} verified.`,
+			good === n ? 'ok' : 'warn'
 		)
-		showResult()
+		// Read-back is the whole point of this tool, so the outcome is said in full, in words, above
+		// the status bar — the drawer keeps the field-by-field evidence for whoever wants it.
+		const secs = list.map((k) => SECTION_NAMES[k]).join(', ')
+		if (failed.length) {
+			setStatus(`${failed.length} of ${n} failed`, 'err')
+			showOutcome('err', `Copy failed on ${failed.length} of ${n} channel${n === 1 ? '' : 's'}`, failed.map((r) => `${r.to.label}: ${r.error}`).join(' · '), { details: true, undo: good > 0 })
+		} else if (clamped.length) {
+			const fields = clamped.reduce((t, r) => t + r.remaining.length, 0)
+			setStatus(`${good}/${n} verified`, 'warn')
+			showOutcome(
+				'warn',
+				`Copied to ${n} channel${n === 1 ? '' : 's'} — ${fields} field${fields === 1 ? '' : 's'} did not take`,
+				`${clamped.map((r) => r.label).join(', ')}: the switcher clamped a value this input will not accept. Everything else was read back and matches.`,
+				{ details: true, undo: true }
+			)
+		} else {
+			setStatus(`${good}/${n} verified by read-back`, 'ok')
+			showOutcome('ok', `Copied to ${n} channel${n === 1 ? '' : 's'} — read back and verified`, `${secs} now match ${src.describe}. Every destination was backed up first.`, { details: true, undo: true, support: true })
+		}
+		// A fresh copy is what Redo replays next time; a new one replaces whatever it could have redone.
+		lastApply = { src, to, list }
+		$('#redo').disabled = true
 		await refreshAfterWrite()
 	} catch (e) {
 		log(esc(e.message), 'err')
-		setStatus(e.message, 'err')
-		showResult()
+		setStatus('')
+		// Nothing was written, so there is no outcome to report — just a failure to acknowledge.
+		showError('The copy did not run', e.message)
 	} finally {
+		endProgress()
+		$('#apply').disabled = false
+	}
+}
+
+/** Replays the last completed copy — what Undo just undid, redone. Available only right after an
+ *  Undo of that same copy; a new Copy or a second Redo uses it up. */
+async function redo() {
+	if (!lastApply || $('#redo').disabled) return
+	$('#redo').disabled = true
+	await performCopy(lastApply.src, lastApply.to, lastApply.list)
+}
+
+// ------------------------------------------------------------------ blend
+
+const isNum = (v) => typeof v === 'number' && Number.isFinite(v)
+const wavg = (av, bv, t) => Math.round(av + (bv - av) * t)
+
+let blendOpen = false
+let blendRatio = 50 // 0 = all source, 100 = all destination
+
+/**
+ * Mix a with b at ratio t (0 = all a, 1 = all b): every numeric setting in a ticked section
+ * becomes the weighted average. On/off state is never averaged — an enable flag has no halfway
+ * position, and "which units are on" is what defines the sound the user dialled in — so those
+ * always come from the source, at any ratio. Input configuration cannot be blended either — a
+ * wiring mode is not a number — so when ticked it behaves like an ordinary copy.
+ */
+function blendChannel(a, b, sec, t = 0.5) {
+	const out = JSON.parse(JSON.stringify(a))
+	const mixIf = (oa, ob, key) => (isNum(oa?.[key]) && isNum(ob?.[key]) ? wavg(oa[key], ob[key], t) : oa?.[key])
+	if (sec.gain) {
+		out.levels.gain = mixIf(a.levels, b.levels, 'gain')
+		out.levels.framesDelay = mixIf(a.levels, b.levels, 'framesDelay')
+		out.levels.stereoSimulation = mixIf(a.levels, b.levels, 'stereoSimulation')
+	}
+	if (sec.volume) out.levels.faderGain = mixIf(a.levels, b.levels, 'faderGain')
+	if (sec.pan) out.levels.balance = mixIf(a.levels, b.levels, 'balance')
+	if (sec.eq) {
+		out.eq.gain = mixIf(a.eq, b.eq, 'gain')
+		out.eq.enabled = a.eq?.enabled
+		const n = Math.min(a.eq?.bands?.length ?? 0, b.eq?.bands?.length ?? 0)
+		const destEqLive = Boolean(b.eq?.enabled)
+		for (let i = 0; i < n; i++) {
+			const ba = a.eq.bands[i]
+			const bb = b.eq.bands[i]
+			if (!ba || !bb) continue
+			// A band the destination isn't using contributes nothing to blend toward — its stored
+			// frequency and Q are leftovers. So it counts as 0 dB of gain (flat), and sliding
+			// toward the destination pulls the band's lift or cut down to nothing rather than
+			// dragging it to a stale setting. Frequency and Q hold the source's, since a band with
+			// no gain has no audible frequency to average against.
+			const destLive = destEqLive && bb.bandEnabled
+			const destGain = destLive ? bb.gain : 0
+			out.eq.bands[i] = {
+				...ba,
+				bandEnabled: ba.bandEnabled,
+				frequency: destLive ? mixIf(ba, bb, 'frequency') : ba.frequency,
+				gain: isNum(ba.gain) && isNum(destGain) ? wavg(ba.gain, destGain, t) : ba.gain,
+				qFactor: destLive ? mixIf(ba, bb, 'qFactor') : ba.qFactor,
+			}
+		}
+	}
+	if (sec.dynamics) {
+		out.dynamics.makeUpGain = mixIf(a.dynamics, b.dynamics, 'makeUpGain')
+		for (const unit of ['compressor', 'limiter', 'expander']) {
+			const ua = a.dynamics?.[unit]
+			const ub = b.dynamics?.[unit]
+			if (!ua || !ub) continue
+			const merged = { ...ua }
+			for (const k of Object.keys(ua)) {
+				// Numbers blend; flags and modes stay as the source has them.
+				if (typeof ua[k] === 'number' && typeof ub[k] === 'number') merged[k] = wavg(ua[k], ub[k], t)
+			}
+			out.dynamics[unit] = merged
+		}
+	}
+	return out
+}
+
+/** The live preview shown on the destination card while the blend bar is open: the source mixed
+ *  with THIS destination's own values, at the current slider position. */
+function blendPreviewFor(destChannel) {
+	const src = isLib('A') ? currentPreset()?.channel : state.A.detail
+	if (!src || !destChannel) return null
+	return blendChannel(src, destChannel, state.sections, blendRatio / 100)
+}
+
+function toggleBlend() {
+	if (isLib('B')) return setStatus('Blend needs a destination switcher, not the preset library', 'warn')
+	blendOpen = !blendOpen
+	$('#blend').classList.toggle('on', blendOpen)
+	renderBlendBar()
+	renderDetail('B')
+}
+
+function closeBlend() {
+	if (!blendOpen) return
+	blendOpen = false
+	$('#blend').classList.remove('on')
+	renderBlendBar()
+	renderDetail('B')
+}
+
+/** The bar itself: source ↔ destination slider, a live readout, and Apply/Cancel — no modal, no
+ *  separate confirmation step. Seeing the preview change as you drag *is* the confirmation. */
+function renderBlendBar() {
+	const bar = $('#blendbar')
+	if (!bar) return
+	if (!blendOpen) {
+		bar.hidden = true
+		bar.textContent = ''
+		return
+	}
+	bar.hidden = false
+	const list = Object.entries(state.sections)
+		.filter(([, v]) => v)
+		.map(([k]) => SECTION_NAMES[k])
+	bar.innerHTML = `
+		<div class="blendhead">
+			<b>Blend</b>
+			<span class="blendsub">Slide toward either side to mix the numbers — the card below previews it live. Which units are on always comes from the source.</span>
+			<button class="blendx" aria-label="Close blend, without applying it">×</button>
+		</div>
+		<div class="blendrow">
+			<span class="blendend src">Source</span>
+			<input type="range" id="blend-slider" min="0" max="100" step="1" value="${blendRatio}" aria-label="Blend ratio, source to destination" />
+			<span class="blendend dst">Destination</span>
+		</div>
+		<div class="blendfoot">
+			<span class="blendnote">${list.length ? `Sections: ${esc(list.join(', '))}` : 'Nothing ticked — pick sections on the source card first.'}${state.sections.inputConfig ? ' · input configuration always comes from the source' : ''}</span>
+			<div class="blendacts"><button class="blendcancel">Cancel</button><button class="primary blendgo">Apply blend</button></div>
+			<span class="blendfootpad"></span>
+		</div>`
+	const readout = () => {
+		const dst = blendRatio
+		const src = 100 - dst
+		bar.querySelector('.blendend.src').textContent = `Source ${src}%`
+		bar.querySelector('.blendend.dst').textContent = `Destination ${dst}%`
+		// The button carries the mix it will apply: source blue at one end, destination red at the
+		// other, so the colour alone says which way this blend leans.
+		const go = bar.querySelector('.blendgo')
+		const t = dst / 100
+		const from = [87, 193, 253]
+		const to = [255, 61, 46]
+		const mix = from.map((c, i) => Math.round(c + (to[i] - c) * t))
+		go.style.background = `rgb(${mix.join(',')})`
+		go.style.borderColor = `rgb(${mix.join(',')})`
+		// Both ends are light enough to need dark text.
+		go.style.color = '#0a1016'
+	}
+	readout()
+	const slider = bar.querySelector('#blend-slider')
+	slider.oninput = (e) => {
+		blendRatio = Number(e.target.value)
+		readout()
+		renderDetail('B')
+	}
+	bar.querySelector('.blendx').onclick = closeBlend
+	bar.querySelector('.blendcancel').onclick = closeBlend
+	bar.querySelector('.blendgo').onclick = applyBlend
+}
+
+/** Meet in the middle: mix the source with each destination's own settings at the chosen ratio,
+ *  rather than replacing the destination outright. Each destination blends against its own
+ *  current values, so this is one /api/apply call per destination even when several are selected. */
+async function applyBlend() {
+	const srcChannel = isLib('A') ? currentPreset()?.channel : state.A.detail
+	if (!srcChannel) return setStatus(isLib('A') ? 'Pick a preset on the left first' : 'Pick a channel on the left first', 'warn')
+	let to
+	try {
+		to = destinations()
+	} catch (e) {
+		setStatus(e.message, 'warn')
+		return
+	}
+	const secObj = state.sections
+	const list = Object.entries(secObj)
+		.filter(([, v]) => v)
+		.map(([k]) => k)
+	if (!list.length) return setStatus('Tick a section on the source card first.', 'warn')
+	const ratio = blendRatio / 100
+	const describeSrc = isLib('A') ? `preset “${currentPreset().name}”` : `${state.A.ip} ${srcChannel.meta.label}`
+
+	hideOutcome()
+	$('#apply').disabled = true
+	$('.blendgo').disabled = true
+	const endProgress = showProgress(to, to.length === 1 ? `Blending with ${to[0].label}` : `Blending onto ${to.length} channels`)
+	try {
+		const results = []
+		for (const t of to) {
+			const destBody = await api(`/api/channel?ip=${encodeURIComponent(t.ip)}&input=${t.input}&source=${encodeURIComponent(t.source)}`)
+			const blended = blendChannel(srcChannel, destBody.channel, secObj, ratio)
+			const body = await api('/api/apply', { method: 'POST', body: JSON.stringify({ payload: blended, to: t, sections: secObj }) })
+			results.push(...body.results)
+		}
+		clearLog()
+		for (const r of [...results].reverse()) {
+			if (!r.ok) {
+				log(`✗ ${esc(describeTarget(r.to))}: ${esc(r.error)}`, 'err')
+				continue
+			}
+			log(`<span class="off">Backup: presets/_backups/${esc(r.backupFile)}</span>`)
+			if (r.remaining?.length) {
+				log(diffTable(r.remaining))
+				log(`⚠ ${esc(r.label)}: read-back shows these fields did not take.`, 'warn')
+			} else {
+				log(`✓ ${esc(describeTarget(r.to))} — blended and verified by read-back.`, 'ok')
+			}
+			for (const s of r.skipped) log(`<span class="off">${esc(r.label)}: skipped ${esc(s)}</span>`, 'warn')
+			for (const w of r.warnings) log(`⚠ ${esc(r.label)}: ${esc(w)}`, 'warn')
+		}
+		const good = results.filter((r) => r.ok && !r.remaining?.length).length
+		const failed = results.filter((r) => !r.ok)
+		const n = results.length
+		log(`<strong>Blended</strong> ${esc(describeSrc)} (${100 - blendRatio}/${blendRatio}) with ${n} channel${n === 1 ? '' : 's'}: ${good}/${n} verified.`, good === n ? 'ok' : 'warn')
+		if (failed.length) {
+			setStatus(`${failed.length} of ${n} failed`, 'err')
+			showOutcome('err', `Blend failed on ${failed.length} of ${n} channel${n === 1 ? '' : 's'}`, failed.map((r) => `${r.to.label}: ${r.error}`).join(' · '), { details: true, undo: good > 0 })
+		} else {
+			setStatus(`${good}/${n} blended and verified`, 'ok')
+			showOutcome('ok', `Blended onto ${n} channel${n === 1 ? '' : 's'}`, `${100 - blendRatio}% source / ${blendRatio}% destination on ${list.map((k) => SECTION_NAMES[k]).join(', ')}.`, { details: true, undo: true })
+		}
+		lastApply = null
+		$('#redo').disabled = true
+		closeBlend()
+		await refreshAfterWrite()
+	} catch (e) {
+		log(esc(e.message), 'err')
+		setStatus('')
+		showError('The blend did not run', e.message)
+	} finally {
+		endProgress()
 		$('#apply').disabled = false
 	}
 }
@@ -838,6 +1359,12 @@ async function savePresetFlow() {
 		return
 	}
 	const group = $('#np-group')?.value.trim() ?? ''
+	// What the preset was made with and for. All optional — but they are what turns a pile of
+	// numbers into something another person can find, judge and trust.
+	const mic = $('#np-mic')?.value.trim() || null
+	const style = $('#np-style')?.value.trim() || null
+	const notes = $('#np-notes')?.value.trim() || null
+	const sampleUrl = $('#np-sample')?.value.trim() || null
 	const over = currentPreset()
 	const overFile = over ? state.library.selectedFile : null
 
@@ -861,7 +1388,7 @@ async function savePresetFlow() {
 				group,
 				defaultSections: sections(),
 				overwrite: overFile,
-				payload: { format: 'atem-audio-preset', version: 1, channel: src, device: state.A.device ?? { ip: state.A.ip } },
+				payload: { format: 'atem-audio-preset', version: 1, channel: src, device: state.A.device ?? { ip: state.A.ip }, mic, style, notes, sampleUrl },
 			}),
 		})
 		await loadPresets()
@@ -870,6 +1397,7 @@ async function savePresetFlow() {
 		delete state.library.cache[body.file]
 		renderSideAll('B')
 		setStatus(`\u2713 Saved preset \u201c${name}\u201d`, 'ok')
+		showOutcome('ok', `Saved “${name}”`, `The whole channel is stored. ${Object.entries(sections()).filter(([, v]) => v).map(([k]) => SECTION_NAMES[k]).join(', ') || 'No section'} will come back ticked when you use it.`)
 		log(`Saved preset \u201c${esc(name)}\u201d from ${esc(src.meta.label)}${group ? ` in group ${esc(group)}` : ''}.`, 'ok')
 	} catch (e) {
 		setStatus(e.message, 'err')
@@ -906,17 +1434,23 @@ async function undo() {
 		'Undo'
 	)
 	if (!ok) return
+	hideOutcome()
+	const endProgress = showProgress([{ label: `the last copy on ${s.ip}` }], 'Restoring the backup')
 	try {
 		const body = await api('/api/undo', { method: 'POST', body: JSON.stringify({ ip: s.ip }) })
 		const names = body.restored.map((m) => `${m.label} (${m.inputId}:${m.sourceId})`)
 		setStatus(`\u21b6 Restored ${names.length} channel${names.length === 1 ? '' : 's'}`, 'ok')
 		log(`Restored ${names.length} channel${names.length === 1 ? '' : 's'} on ${esc(s.ip)}: ${esc(names.join(', '))}.`, 'ok')
 		for (const r of body.results.filter((r) => !r.ok)) log(`✗ ${esc(r.meta.label)}: ${esc(r.error)}`, 'err')
-		showResult()
+		// The copy this just undid can be redone — but only that one, and only until something else happens.
+		$('#redo').disabled = !(lastApply && lastApply.to[0]?.ip === s.ip)
+		showOutcome('ok', `Put back ${names.length} channel${names.length === 1 ? '' : 's'}`, `${names.join(', ')} — restored from the backup taken before the copy.`, { details: true })
 		await refreshAfterWrite()
 	} catch (e) {
 		log(esc(e.message), 'err')
-		showResult()
+		showError('Could not undo', e.message)
+	} finally {
+		endProgress()
 	}
 }
 
@@ -985,6 +1519,48 @@ async function snapshot(side) {
 
 // ------------------------------------------------------------------ wiring
 
+/**
+ * The address box is a typed field with a memory. Not everyone knows their switcher's address by
+ * heart, and typing four numbers under time pressure is the first place this app can waste
+ * someone's evening — so the ▾ offers what it already knows: addresses used before, the other
+ * column's switcher, and the address every ATEM ships with.
+ */
+function openIpMenu(side) {
+	document.querySelector('.ipdrop')?.remove()
+	const p = panel(side)
+	const btn = p.querySelector('.ipmenu')
+	const input = p.querySelector('.ip')
+	const other = panel(side === 'A' ? 'B' : 'A').querySelector('.ip').value.trim()
+	const items = []
+	for (const ip of recentIps()) items.push({ ip, note: 'used before' })
+	if (other && !items.some((i) => i.ip === other)) items.push({ ip: other, note: 'the other column' })
+	if (!items.some((i) => i.ip === '192.168.10.240')) items.push({ ip: '192.168.10.240', note: 'ATEM factory default' })
+
+	const drop = el('div', 'ipdrop')
+	for (const it of items) {
+		const row = el('button', 'ipdroprow')
+		row.innerHTML = `<b>${esc(it.ip)}</b><span>${esc(it.note)}</span>`
+		row.onclick = () => {
+			input.value = it.ip
+			drop.remove()
+			btn.setAttribute('aria-expanded', 'false')
+			connectSide(side)
+		}
+		drop.append(row)
+	}
+	const help = el('div', 'ipdrophelp', 'ATEM Setup lists the address under the switcher’s name.')
+	drop.append(help)
+	p.querySelector('.conn').append(drop)
+	btn.setAttribute('aria-expanded', 'true')
+	const away = (ev) => {
+		if (drop.contains(ev.target)) return
+		drop.remove()
+		btn.setAttribute('aria-expanded', 'false')
+		document.removeEventListener('click', away)
+	}
+	setTimeout(() => document.addEventListener('click', away), 0)
+}
+
 for (const side of ['A', 'B']) {
 	const p = panel(side)
 	const saved = localStorage.getItem(`${LS}.ip.${side}`)
@@ -993,26 +1569,15 @@ for (const side of ['A', 'B']) {
 	p.querySelector('.ip').onkeydown = (e) => {
 		if (e.key === 'Enter') connectSide(side)
 	}
+	p.querySelector('.ipmenu').onclick = (e) => {
+		e.stopPropagation()
+		openIpMenu(side)
+	}
 	for (const btn of p.querySelectorAll('.kind')) btn.onclick = () => setKind(side, btn.dataset.kind)
 	state[side].multi = side === 'B' && !isLib('B')
 	renderSideAll(side)
 }
 
-$('#mode-toggle').onclick = async () => {
-	state.two = !state.two
-	applyMode()
-	if (state.two) {
-		// The right-hand column becomes the new, empty half; the left keeps its switcher.
-		const known = state.A.ip
-		const savedB = localStorage.getItem(`${LS}.ip.B`)
-		panel('B').querySelector('.ip').value = savedB && savedB !== known ? savedB : ''
-		panel('B').querySelector('.ip').focus()
-		setStatus('Enter the second switcher\u2019s address on the right, then Connect', 'warn')
-	} else {
-		// Collapse back onto whichever box the source column was using.
-		await connectSingle()
-	}
-}
 applyMode()
 
 $('#swap').onclick = () => {
@@ -1034,8 +1599,10 @@ document.addEventListener('change', (e) => {
 
 $('#apply').onclick = apply
 $('#undo').onclick = undo
-$('#snapshot-A').onclick = () => snapshot('A')
-$('#snapshot-B').onclick = () => snapshot('B')
+$('#redo').onclick = redo
+$('#blend').onclick = toggleBlend
+$('#snapshot-A')?.addEventListener('click', () => snapshot('A'))
+$('#snapshot-B')?.addEventListener('click', () => snapshot('B'))
 async function importFile(e) {
 	const file = e.target.files[0]
 	if (!file) return
@@ -1064,7 +1631,16 @@ async function importFile(e) {
 	e.target.value = ''
 }
 
-$('#load-file').onchange = importFile
+$('#help-open').onclick = () => toggleHelp()
+
+const logClose = $('#logclose')
+if (logClose)
+	logClose.onclick = () => {
+		$('#logbox').hidden = true
+	}
+
+const loadFileInput = $('#load-file')
+if (loadFileInput) loadFileInput.onchange = importFile
 
 // A block *is* the control: click anywhere in one on the source card to include or exclude that
 // section from the copy.
@@ -1073,14 +1649,927 @@ document.addEventListener('click', (e) => {
 	const block = e.target.closest('.block[data-sec]')
 	if (!block) return
 	const name = block.dataset.sec
+	const hadFocus = document.activeElement === block
 	state.sections[name] = !state.sections[name]
 	renderDetail('A')
 	renderDetail('B')
+	// The status bar names what travels, so it has to follow the ticks.
+	updateSummary()
+	// With nothing ticked there is nothing to copy — the buttons say so by going dead.
+	updateActionUI()
+	if (hadFocus) document.querySelector(`#panel-A .block[data-sec="${name}"]`)?.focus()
+})
+
+// Keyboard equivalents. A block is a checkbox, so space and enter toggle it; the channel lists
+// are listboxes, so the arrows move through them and enter picks.
+document.addEventListener('keydown', (e) => {
+	if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+	const block = e.target.closest?.('#panel-A .stripcard.selectable .block[data-sec]')
+	if (block && (e.key === 'Enter' || e.key === ' ')) {
+		e.preventDefault()
+		block.click()
+		return
+	}
+	const row = e.target.closest?.('.chan')
+	if (!row) return
+	const side = e.target.closest('#panel-B') ? 'B' : 'A'
+	const rows = [...panel(side).querySelectorAll('.chan')]
+	const i = rows.indexOf(row)
+	if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+		e.preventDefault()
+		const next = rows[Math.min(rows.length - 1, Math.max(0, i + (e.key === 'ArrowDown' ? 1 : -1)))]
+		if (!next) return
+		for (const r of rows) r.tabIndex = r === next ? 0 : -1
+		next.focus()
+		return
+	}
+	e.preventDefault()
+	const key = row.dataset.key
+	row.click()
+	// The list is rebuilt by the selection, so put focus back on the same strip.
+	if (key) setTimeout(() => [...panel(side).querySelectorAll('.chan')].find((r) => r.dataset.key === key)?.focus(), 0)
 })
 
 updateSummary()
 loadPresets()
 
+/**
+ * The ask, in the author's own voice, before the GitHub page.
+ *
+ * Sending someone straight to a sponsors page asks them to work out what they are looking at and
+ * what they are meant to do. This says who made the thing, why it exists, and what to pick when
+ * they get there — then hands them over. It is a lightbox rather than a link because the one moment
+ * it has is the moment they were already curious enough to click.
+ */
+function openSupport() {
+	const overlay = el('div', 'modal-overlay')
+	const box = el('div', 'modal modal-support')
+	box.innerHTML =
+		'<div class="suphead"><img class="supface" src="ryan-avatar.png" alt="Ryan, who makes this" width="60" height="60" />' +
+		'<div><h3>Thanks for asking</h3><p class="supwho">Ryan · Studio Upgrade</p></div></div>' +
+		'<div class="modal-detail">' +
+		'<p>I’m Ryan. I build studios and tools for small teams at Studio Upgrade, and I write things like this in the evenings, usually because I hit the problem myself, on a studio build, with a switcher and not enough time.</p>' +
+		'<p>This one took a lot longer than it looks. The EQ and dynamics curves are real maths, matched against the hardware a dB at a time; every write is read back and checked, because an ATEM will simply ignore a value it does not like. That care is the whole point, and it is also why it is slow to make.</p>' +
+		'<p>It is free, and it stays free. Sponsorship is what buys the evenings — it pays for the test hardware, and it decides whether the next thing gets built or stays on the list.</p>' +
+		'<p class="supask"><b>If you want to help:</b> <b>$5 a month</b> is the one that actually makes a difference — it is small enough to forget and steady enough to plan around. A one-off tip is very welcome too, if monthly is not your thing.</p>' +
+		'<p class="modal-note">The next page is GitHub Sponsors. You will see monthly tiers first; the one-time option is the <em>“Or, pay once”</em> section a little further down. You need a GitHub account, and it takes about a minute.</p>' +
+		'<p>Either way — thank you for using it, and for reading this far.</p>' +
+		'</div>'
+	const actions = el('div', 'modal-actions')
+	const later = el('button', null, 'Maybe later')
+	const go = el('a', 'primary modal-cta', 'Open GitHub Sponsors')
+	go.href = SUPPORT_URL
+	go.target = '_blank'
+	go.rel = 'noreferrer'
+	actions.append(later, go)
+	box.append(actions)
+	overlay.append(box)
+	document.body.append(overlay)
+	go.focus()
+	const done = () => {
+		document.removeEventListener('keydown', onKey)
+		overlay.remove()
+	}
+	const onKey = (e) => {
+		if (e.key === 'Escape') done()
+	}
+	document.addEventListener('keydown', onKey)
+	later.onclick = done
+	go.onclick = done
+	overlay.onclick = (e) => {
+		if (e.target === overlay) done()
+	}
+}
+
 const coffee = $('#coffee')
-if (SUPPORT_URL) coffee.href = SUPPORT_URL
+if (SUPPORT_URL)
+	coffee.onclick = (e) => {
+		e.preventDefault()
+		openSupport()
+	}
 else coffee.remove()
+
+// ------------------------------------------------------------------ addresses
+
+/** Remember an address that actually worked, so it can be offered instead of retyped. */
+function rememberIp(ip) {
+	if (!ip) return
+	const list = [ip, ...recentIps().filter((x) => x !== ip)].slice(0, 5)
+	localStorage.setItem(`${LS}.recent`, JSON.stringify(list))
+	renderRecent()
+}
+
+function renderRecent() {
+	const dl = $('#recent-ips')
+	if (!dl) return
+	dl.innerHTML = recentIps()
+		.map((ip) => `<option value="${esc(ip)}"></option>`)
+		.join('')
+}
+
+// ------------------------------------------------------------------ hints
+
+/**
+ * The three things people miss — clickable blocks, multi-select destinations, and the
+ * Switcher | Presets toggle. Shown one at a time as a floating coach-mark (see tips.js) that
+ * points at the real control rather than pushing the layout around; each is gone for good once
+ * dismissed.
+ */
+function renderCardHint(side) {
+	if (side === 'A' && state.A.detail) {
+		Tips.show({
+			key: 'blocks',
+			target: '#panel-A .stripcard.selectable .block[data-sec="gain"]',
+			placement: 'right',
+			title: "Copy as many settings as you'd like",
+			text: 'Click any block on this card to include or leave it out of the copy. A green edge means the copy replaces it.',
+		})
+		return
+	}
+	if (side === 'B' && !isLib('B') && state.B.channels.length && selectedKeys('B').length < 2) {
+		Tips.show({
+			key: 'multi',
+			target: '#panel-B .channel-list',
+			placement: 'right',
+			title: 'Copying onto several channels',
+			text: `${MOD}-click adds one channel, shift-click takes a whole range.`,
+		})
+		return
+	}
+	if (side === 'A' && state.A.channels.length && !Tips.isSeen('blocks')) {
+		Tips.show({
+			key: 'kinds',
+			target: '#panel-A .kinds',
+			placement: 'bottom',
+			title: 'Switcher or presets, either column',
+			text: 'Either column can hold the switcher’s channels or your saved presets — that is what this toggle does.',
+		})
+	}
+}
+
+// ------------------------------------------------------------------ empty and error states
+
+function renderEmptyCard(side, box) {
+	if (state[side].error) return renderConnectError(side, box)
+	if (!isLib(side) && !state[side].channels.length) {
+		// Connected but nothing listed happens when this column was the library at connect time.
+		if (state[side].device) {
+			box.innerHTML = '<div class="guide quiet"><p class="glead">Press Connect to list this switcher\u2019s channels again.</p></div>'
+			return
+		}
+		return renderFirstRun(side, box)
+	}
+	if (isLib(side) && !state.library.presets.filter((p) => p.format !== 'atem-audio-snapshot').length) return renderLibraryGuide(side, box)
+	const what = isLib(side)
+		? 'Pick a preset in the list on the left.'
+		: side === 'A'
+			? 'Pick the channel you want to copy from.'
+			: `Pick the channels to copy onto — ${MOD}-click or shift-click for several.`
+	box.innerHTML = `<div class="guide quiet"><p class="glead">${esc(what)}</p></div>`
+}
+
+/**
+ * First run. Two empty columns and “Connect a switcher to begin” told a new user nothing about
+ * what the app does or where to find an address — both of which fit in the space that was blank.
+ */
+// ------------------------------------------------------------------ tour sample switcher
+
+/**
+ * A pretend switcher, for the tour only.
+ *
+ * The tour is most useful on the machine that cannot reach a switcher — someone reading up before
+ * the shoot, or with the studio network still unplugged. Empty columns make every step abstract, so
+ * the tour fills them with a plausible ATEM: real value shapes, real curves, nothing on the
+ * network. It is torn down the moment the tour ends, so nobody can mistake it for their own rig or
+ * copy from it.
+ */
+const tourBand = (shape, frequency, gain, qFactor, bandEnabled = true) => ({
+	bandEnabled,
+	shape,
+	frequencyRange: 4,
+	frequency,
+	gain,
+	qFactor,
+	supportedShapes: [1, 2, 4, 8, 16, 32],
+	supportedFrequencyRanges: [1, 2, 4, 8],
+})
+
+function tourChannel(inputId, label, mic) {
+	const eq = mic
+		? { enabled: true, gain: 0, bands: [tourBand(16, 80, 0, 70), tourBand(4, 240, -350, 120), tourBand(4, 1200, 150, 90), tourBand(4, 3500, 250, 80), tourBand(32, 8000, 200, 70), tourBand(4, 12000, 0, 100, false)] }
+		: { enabled: true, gain: 0, bands: [tourBand(4, 100, 0, 100), tourBand(4, 800, 0, 100), tourBand(4, 3000, 0, 100), tourBand(4, 9000, 0, 100)] }
+	const dynamics = mic
+		? {
+				makeUpGain: 1077,
+				expander: { expanderEnabled: true, gateEnabled: false, threshold: -4500, range: 2000, ratio: 200, attack: 100, hold: 1000, release: 10000 },
+				compressor: { compressorEnabled: true, threshold: -2000, ratio: 300, attack: 200, hold: 1000, release: 12000 },
+				limiter: { limiterEnabled: true, threshold: -1550, attack: 10, hold: 200, release: 5000 },
+			}
+		: {
+				makeUpGain: 0,
+				expander: { expanderEnabled: false, gateEnabled: false, threshold: -3500, range: 3000, ratio: 200, attack: 100, hold: 1000, release: 10000 },
+				compressor: { compressorEnabled: false, threshold: -1500, ratio: 200, attack: 200, hold: 1000, release: 10000 },
+				limiter: { limiterEnabled: false, threshold: -900, attack: 10, hold: 200, release: 5000 },
+			}
+	return {
+		meta: {
+			inputId,
+			sourceId: '-256',
+			label,
+			inputType: mic ? 2 : 0,
+			sourceType: mic ? 0 : 1,
+			configuration: mic ? 1 : 2,
+			inputLevel: mic ? 1 : 0,
+			maxFramesDelay: 8,
+			hasStereoSimulation: !mic,
+			supportedMixOptions: [1, 2, 4],
+			supportedConfigurations: mic ? [1, 2, 4] : [],
+			supportedInputLevels: mic ? [1, 2, 4] : [],
+		},
+		levels: { gain: mic ? 4000 : 0, faderGain: mic ? 0 : -600, balance: 0, framesDelay: 0, stereoSimulation: 0, mixOption: 2 },
+		eq,
+		dynamics,
+	}
+}
+
+const TOUR_DEFS = [
+	[1001, 'Mic 1', true],
+	[1002, 'Mic 2', true],
+	[1, 'Camera 1', false],
+	[2, 'Camera 2', false],
+	[3, 'Camera 3', false],
+	[4, 'Lectern', false],
+]
+
+function enterTourDemo() {
+	if (tourDemo) return
+	const channels = TOUR_DEFS.map(([inputId, label, mic]) => ({
+		key: `${inputId}:-256`,
+		inputId,
+		sourceId: '-256',
+		label,
+		leg: null,
+		minor: false,
+		configurationLabel: mic ? 'Mono' : 'Stereo',
+		summary: { eqActive: mic, eqBandsOn: mic ? 5 : 0, dynActive: mic },
+	}))
+	const bodies = {}
+	for (const [inputId, label, mic] of TOUR_DEFS) bodies[`${inputId}:-256`] = tourChannel(inputId, label, mic)
+	const device = { model: 'ATEM Mini Extreme ISO', release: '10.3', build: 'sample', ip: 'sample' }
+	tourDemo = { A: { ...state.A }, B: { ...state.B }, ipA: panel('A').querySelector('.ip').value, ipB: panel('B').querySelector('.ip').value }
+	for (const side of ['A', 'B']) {
+		const s = state[side]
+		s.ip = 'sample'
+		s.device = device
+		s.channels = channels
+		s.selection = side === 'A' ? ['1001:-256'] : ['1:-256']
+		s.anchor = null
+		s.error = null
+		s.detail = JSON.parse(JSON.stringify(bodies[side === 'A' ? '1001:-256' : '1:-256']))
+		panel(side).querySelector('.ip').value = 'sample switcher'
+		panel(side).querySelector('.device').innerHTML = '<span class="warn">●</span> <b>Sample switcher</b> — for the tour only. Nothing here is real and nothing can be written.'
+		panel(side).classList.add('sample')
+		renderSideAll(side)
+	}
+	document.body.classList.add('sample-on')
+	updateActionUI()
+}
+
+function exitTourDemo() {
+	removeGhost()
+	if (!tourDemo) return
+	for (const side of ['A', 'B']) {
+		Object.assign(state[side], tourDemo[side])
+		panel(side).querySelector('.ip').value = side === 'A' ? tourDemo.ipA : tourDemo.ipB
+		panel(side).querySelector('.device').innerHTML = state[side].ip ? deviceLine(state[side].device) : ''
+		panel(side).classList.remove('sample')
+		renderSideAll(side)
+	}
+	document.body.classList.remove('sample-on')
+	tourDemo = null
+	updateActionUI()
+}
+
+/**
+ * A pointer that drives itself.
+ *
+ * The clickable-block idea is the one thing users miss most — a block looks like a readout, not a
+ * control. Telling them is weaker than showing them, so during the tour a ghost cursor walks to a
+ * couple of blocks and toggles them, and the green outline appears and disappears where they can
+ * see it. It only runs against the sample switcher, and it puts the ticks back when it is done.
+ */
+let ghostRun = 0
+
+function ghostCursor() {
+	let g = document.querySelector('.ghostcursor')
+	if (!g) {
+		g = el('div', 'ghostcursor')
+		g.setAttribute('aria-hidden', 'true')
+		document.body.append(g)
+	}
+	return g
+}
+
+function removeGhost() {
+	ghostRun++
+	document.querySelector('.ghostcursor')?.remove()
+}
+
+async function demoBlockClicks() {
+	const run = ++ghostRun
+	const g = ghostCursor()
+	const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+	const moveTo = async (sel) => {
+		const t = document.querySelector(sel)
+		if (!t) return false
+		const r = t.getBoundingClientRect()
+		g.style.left = `${r.left + r.width * 0.5}px`
+		g.style.top = `${r.top + r.height * 0.55}px`
+		g.classList.add('on')
+		await wait(620)
+		return run === ghostRun
+	}
+	const clickBlock = async (sec) => {
+		if (run !== ghostRun) return false
+		g.classList.add('press')
+		await wait(150)
+		g.classList.remove('press')
+		if (run !== ghostRun) return false
+		state.sections[sec] = !state.sections[sec]
+		renderDetail('A')
+		renderDetail('B')
+		updateSummary()
+		await wait(700)
+		return run === ghostRun
+	}
+	const before = { ...state.sections }
+	const script = ['eq', 'eq', 'dynamics', 'dynamics']
+	for (const sec of script) {
+		if (!(await moveTo(`#panel-A .block[data-sec="${sec}"]`))) return removeGhost()
+		if (!(await clickBlock(sec))) return removeGhost()
+	}
+	if (run !== ghostRun) return
+	Object.assign(state.sections, before)
+	renderDetail('A')
+	renderDetail('B')
+	updateSummary()
+	removeGhost()
+}
+
+/**
+ * The guided tour. Rather than a wall of instructions in the empty column, the app walks through
+ * itself: each step spotlights the real control and says what it does. With no switcher connected
+ * it runs against a sample one, so every step has something real to point at.
+ */
+function startTour({ force = false } = {}) {
+	// The sample switcher must only appear if the tour is genuinely about to run. Tips.sequence
+	// declines silently once the tour has been seen, and a sample left standing after a decline
+	// would disable Copy on a real connection forever.
+	if (Tips.isSeen('seq.first-run-v1') && !force) return
+	const wasEmpty = !state.A.channels?.length
+	if (wasEmpty) enterTourDemo()
+	Tips.sequence(
+		'first-run-v1',
+		[
+			{
+				key: 'tour.address',
+				target: '#panel-A .conn',
+				placement: 'right',
+				title: 'Start with the switcher’s address',
+				text: 'Type it here, or press the ▾ to pick one this app has seen before. Out of the box an ATEM is 192.168.10.240; ATEM Setup shows the real one. This machine has to be on the same network.',
+			},
+			{
+				key: 'tour.both',
+				target: '#panel-B .list-col',
+				placement: 'left',
+				title: 'One switcher fills both sides',
+				text: 'Connect once and the same switcher appears left and right — that is the normal case, copying between channels on one box. Copying to a switcher in another room? Give this column its own address and press Connect.',
+			},
+			{
+				key: 'tour.pick',
+				target: '#panel-A .channel-list',
+				placement: 'right',
+				title: 'Left is where sound comes from',
+				text: `Pick the channel you already dialled in. On the right, pick where it should go — ${MOD}-click or shift-click to take several at once.`,
+			},
+			{
+				key: 'tour.blocks',
+				target: '#panel-A .card-col',
+				placement: 'right',
+				title: 'Click a block to include it',
+				text: 'The card breaks into Gain, Volume, Pan, EQ and Dynamics. Clicking anywhere in a block includes or excludes it — the whole block is the checkbox, and a green edge means the copy replaces it. Watch, then try it yourself.',
+				before: () => {
+					// Not awaited on purpose: the tip appears immediately and the demonstration plays
+					// behind it, so nobody is left staring at a frozen step.
+					demoBlockClicks()
+				},
+			},
+			{
+				key: 'tour.copy',
+				target: '#apply',
+				placement: 'bottom',
+				title: 'Copy writes, then checks',
+				text: 'Every destination is backed up first, written, then read back — a switcher silently ignores values it will not take, so this app measures the result instead of assuming it. Undo restores the whole batch.',
+			},
+			{
+				key: 'tour.blend',
+				target: '#blend',
+				placement: 'bottom',
+				title: 'Blend meets in the middle',
+				text: 'Instead of replacing outright, slide between the source and whatever the destination already had. On/off state always follows the source; only the numbers mix.',
+			},
+			{
+				key: 'tour.library',
+				target: '#browse-open',
+				placement: 'bottom',
+				title: 'Presets other people made',
+				text: 'Chains for real microphones — SM7B, PodMic, lectern goosenecks — with notes on what they are for. Save your own here too, and share them back.',
+			},
+			{
+				key: 'tour.startup',
+				target: '#panel-B .card-col',
+				placement: 'left',
+				title: 'One thing the switcher will not do for you',
+				text: 'An ATEM forgets audio settings on a power cycle unless they are saved as its startup state. Once the sound is right, open ATEM Software Control and choose Save Startup State — otherwise the next cold boot brings back the old numbers.',
+			},
+			{
+				key: 'tour.yourturn',
+				target: '#panel-A .conn',
+				placement: 'right',
+				title: 'Now your turn',
+				text: 'That was a sample switcher — it disappears when you press Done. Type your own ATEM’s address here and press Connect. Help at the bottom of the window brings all of this back.',
+				before: () => removeGhost(),
+			},
+		],
+		{
+			force,
+			onDone: () => {
+				exitTourDemo()
+				// End where the work starts: the cursor in the address box, ready to be typed into.
+				const ip = panel('A').querySelector('.ip')
+				if (!ip.value) ip.focus()
+			},
+		}
+	)
+}
+
+/**
+ * Guidance for a column with nothing in it yet.
+ *
+ * One line, not a lecture. What the app is and how to find an address live behind Help; how it
+ * works is shown by the tour. An empty column's job is to say what to do next.
+ */
+function renderFirstRun(side, box) {
+	if (side === 'B') {
+		box.innerHTML =
+			'<div class="guide quiet"><b class="ghead">Where the settings land</b>' +
+			'<p class="glead">Connect on the left and this side fills with the same switcher — copying between channels on one box is the normal case.</p>' +
+			'<p class="glead">Copying to a switcher in another room? Type its address above and press <em>Connect</em>.</p></div>'
+		return
+	}
+	const recents = recentIps()
+	box.innerHTML =
+		'<div class="guide">' +
+		'<b class="ghead">No switcher connected</b>' +
+		'<p class="glead">Type your ATEM’s address above and press Connect. Both columns fill with its audio strips.</p>' +
+		(recents.length ? `<div class="chips">${recents.map((ip) => `<button class="chip" data-ip="${esc(ip)}">${esc(ip)}</button>`).join('')}</div>` : '') +
+		'<div class="gactions"><button id="tour-start">Show me how it works</button></div>' +
+		'</div>'
+	const tour = box.querySelector('#tour-start')
+	if (tour) tour.onclick = () => startTour({ force: true })
+	for (const b of box.querySelectorAll('.chip')) {
+		b.onclick = () => {
+			panel(side).querySelector('.ip').value = b.dataset.ip
+			connectSide(side)
+		}
+	}
+}
+
+/** Everything that used to crowd the empty column, in one place someone can go looking for. */
+/**
+ * The manual.
+ *
+ * A full-screen document rather than a panel: this is where someone lands when they are stuck, or
+ * reading up before a shoot, and the answers are long enough to need room. Sections mirror the way
+ * the app is actually used — connect, pick, choose, copy, verify, save, share.
+ */
+function toggleHelp(force) {
+	const box = $('#helppanel')
+	const btn = $('#help-open')
+	const open = force ?? box.hidden
+	box.hidden = !open
+	btn.setAttribute('aria-expanded', open ? 'true' : 'false')
+	document.body.classList.toggle('help-on', open)
+	if (!open) {
+		box.textContent = ''
+		return
+	}
+	// Illustrations are drawn from the app's own vocabulary rather than shipped as screenshots —
+	// screenshots go stale the first time a colour changes, and this has to work offline.
+	const fig = (inner, caption) => `<figure class="helpfig">${inner}<figcaption>${caption}</figcaption></figure>`
+	const blocksFig = fig('<div class="figcard" id="fig-card"></div>', 'The real card, shrunk. A green edge means the copy replaces that block — click anywhere in a block to include or exclude it.')
+	const flowFig = fig(
+		'<div class="figflow"><span class="figcol src">SOURCE<b>Mic 1</b></span><span class="figarrows">▶ ▶ ▶</span><span class="figcol dst">DESTINATION<b>Camera 1, 2, 3</b></span></div>',
+		'Left is where the sound comes from; right is where it lands. One source, as many destinations as you select.'
+	)
+	const blendFig = fig(
+		'<div class="figslider"><span>Source 100%</span><i></i><span>Destination 100%</span></div>',
+		'Blend mixes the numbers instead of replacing them. On/off state always follows the source.'
+	)
+
+	box.innerHTML =
+		'<div class="helpdoc">' +
+		'<div class="helphead"><div><h2>ATEM Audio Presets</h2><p class="helpsub">Copy a channel’s sound onto other channels — and keep the ones that work.</p></div>' +
+		'<button id="helpclose" aria-label="Close help">×</button></div>' +
+		'<nav class="helpnav">' +
+		'<a href="#h-start">Getting started</a><a href="#h-copy">Copying</a><a href="#h-blend">Blending</a><a href="#h-verify">Did it work</a><a href="#h-presets">Presets</a><a href="#h-share">Sharing</a><a href="#h-trouble">When it goes wrong</a>' +
+		'</nav>' +
+		'<article class="helpbody">' +
+		'<section id="h-start"><h3>Getting started</h3>' +
+		'<p>Dial in a good mic chain once, then put it on the other channels — or on the switcher in the other room, or save it for next month. Doing that by hand in Blackmagic’s own software means copying about forty numbers across a dozen panels, per channel.</p>' +
+		'<h4>Connecting</h4>' +
+		'<p>Type your switcher’s address in the box at the top of the source column and press <em>Go</em>. The ▾ inside the box offers addresses this app has seen before, plus the one every ATEM ships with.</p>' +
+		'<p><b>Finding the address:</b> ATEM Setup, on any machine that can see the switcher, lists it under the switcher’s name. Straight out of the box it is <code>192.168.10.240</code>. This app has to run on a machine on the same network — studio Wi‑Fi and the wired studio network usually are not the same network.</p>' +
+		'<h4>One switcher, or two</h4>' +
+		'<p>Connecting once fills <em>both</em> columns with the same switcher — that is the normal case, copying between channels on one box. To copy from one switcher to another, type the second address in the destination column and press Go; that column takes over its own switcher. Pointing it back at the first address collapses to one again.</p>' +
+		'<h4>The tour</h4>' +
+		'<p>The walkthrough points at each control in turn, using a sample switcher if you have none connected. It runs by itself the first time you open the app.</p>' +
+		'<p><button id="help-tour" class="primary">Show me how it works</button></p>' +
+		'</section>' +
+		`<section id="h-copy"><h3>Copying</h3>${flowFig}` +
+		`<p>Pick the channel you already dialled in on the left. On the right, pick where it should go — ${esc(MOD)}-click or shift-click for several at once.</p>` +
+		`<h4>Choosing what travels</h4>${blocksFig}` +
+		'<p>The card divides into Gain, Volume, Pan, EQ, Dynamics and Input. Clicking anywhere in a block on the source card includes or excludes it — the whole block is the checkbox. Included blocks get a green outline on both cards, and the destination card previews the result: the incoming values drawn live with the channel’s current values ghosted behind, plus <em>was …</em> annotations.</p>' +
+		'<p>Then press Copy. If Copy is greyed out, something is missing — hover it and it will say which.</p>' +
+		'<h4>What is never copied</h4>' +
+		'<p>A channel’s on/off state. It is a live operating control, and pasting it could mute someone mid-show. The app will not copy it or show it.</p>' +
+		'</section>' +
+		`<section id="h-blend"><h3>Blending</h3>${blendFig}` +
+		'<p>Sometimes you do not want to replace what is there — you want to meet it halfway. Press Blend and a slider appears above the two columns: drag it and the destination card previews the mix live.</p>' +
+		'<p>Only numbers are mixed. Which units are on — EQ, expander, compressor, limiter — always comes from the source, because an enable flag has no halfway position. A band the destination is not using counts as flat, so sliding toward the destination fades the source’s lift or cut down to nothing rather than toward a stale value.</p>' +
+		'<p>Blend works on one destination at a time: the mix depends on what is already there, so several destinations would give several different answers.</p>' +
+		'</section>' +
+		'<section id="h-verify"><h3>Did it work</h3>' +
+		'<p>A switcher silently ignores values it will not take — a camera input will not accept a microphone’s +40 dB of gain. So this app measures instead of assuming: every destination is backed up, written, then <b>read back and compared</b>. The band above the status bar reports what actually landed, and <em>What changed</em> opens the field-by-field detail.</p>' +
+		'<p><b>Undo</b> restores the whole batch from those backups. They are kept alongside your presets, in <code class="presetdir">the app’s preset folder</code> — in the desktop app, <em>Presets → Reveal preset folder</em> opens it.</p>' +
+		'<h4>Making it survive a power cycle</h4>' +
+		'<p>An ATEM forgets audio settings when it loses power unless they are stored as its startup state. Once the sound is right, open ATEM Software Control and choose <em>Save Startup State</em> — otherwise the next cold boot brings back the old numbers. This app cannot do it for you.</p>' +
+		'</section>' +
+		'<section id="h-presets"><h3>Presets</h3>' +
+		'<p>Flip either column from <em>Switcher</em> to <em>Presets</em> and it becomes the preset library. Only one column can hold the library at a time, so you can never copy a preset onto a preset.</p>' +
+		'<h4>Saving one</h4>' +
+		'<p>Put the library on the destination side and the card becomes a save form. Name it for what it is, and fill in the mic and the style — those are how you and everyone else will find it later. Notes are worth writing: what it suits, what to tweak by ear. The blocks you have ticked become the preset’s default sections.</p>' +
+		'<h4>Using one</h4>' +
+		'<p>Put the library on the source side, pick a preset, pick destination channels, and copy as usual. A preset is a whole channel, so you can take only the EQ from it if that is all you want.</p>' +
+		'<h4>Packs</h4>' +
+		'<p>Export all bundles every preset into one file — the unit people trade. Import a pack reads one back in. A pack carries names, groups and default sections, and nothing identifying about the machine that made it beyond the switcher model and firmware.</p>' +
+		'</section>' +
+		'<section id="h-share"><h3>Sharing</h3>' +
+		'<p><em>Community presets</em> at the top opens the shared library: chains for real microphones, with notes on what they are for and who made them. Search by mic or style, read the comments, take what works.</p>' +
+		`<p>Presets you have made can be published back the same way. Good ones — a lectern gooseneck that finally stopped booming, a podcast chain that survives a loud laugh — save someone else an evening. Questions, requests and the people doing the same job live in <a href="${LOOP_URL}" target="_blank" rel="noreferrer">the community</a>.</p>` +
+		'</section>' +
+		'<section id="h-trouble"><h3>When it goes wrong</h3>' +
+		'<h4>It will not connect</h4>' +
+		'<p>In rough order of likelihood: something else already holds the switcher (an ATEM allows only a handful of control connections — quit ATEM Software Control or Companion), it is off or still starting up (a cold start takes about half a minute), this machine is not on the switcher’s network, or the address is wrong. The app names the likely cause and keeps the raw error under a disclosure.</p>' +
+		'<h4>Some values did not take</h4>' +
+		'<p>The read-back found the switcher holding something different from what was sent — almost always because the destination cannot accept that value. The detail lists each field and both numbers. Nothing is silently wrong.</p>' +
+		'<h4>It sounded right, then the switcher was power-cycled</h4>' +
+		'<p>Save Startup State, above. This is the most common surprise.</p>' +
+		'</section>' +
+		`<footer class="helpend"><b>If this saved you an evening</b>` +
+		`<p>I make this on my own time, and it stays free. Two things keep it going, and both take a minute:</p>` +
+		`<div class="helpend-acts"><button id="help-say-thanks" class="primary">Say thanks</button>` +
+		`<a class="footbtn loop" href="${LOOP_URL}" target="_blank" rel="noreferrer">Join the community</a></div>` +
+		`<p class="helpend-why">The community is where the good presets come from, someone has already solved the mic you are fighting with, and it is a friendlier room than most. Sponsors are why the next feature gets built instead of staying on the list. If you use this on paid work, that is the honest nudge.</p>` +
+		`<p class="helpend-sig">Thanks for reading this far. \u2014 Ryan, <a href="https://studioupgrade.com" target="_blank" rel="noreferrer">Studio Upgrade</a></p></footer>` +
+		'</article></div>'
+	box.querySelector('#helpclose').onclick = () => toggleHelp(false)
+	// The card figure is the app's own card, not a drawing of one: same renderer, same maths, a sample
+	// channel, scaled down. It cannot drift out of date with the real thing.
+	const figCard = box.querySelector('#fig-card')
+	if (figCard) {
+		try {
+			renderStripCard(figCard, tourChannel(1001, 'Mic 1', true), {
+				sections: { gain: false, volume: false, pan: false, eq: true, dynamics: true, inputConfig: false },
+				source: true,
+				incoming: null,
+			})
+		} catch {
+			figCard.remove()
+		}
+	}
+	box.querySelector('#help-tour').onclick = () => {
+		toggleHelp(false)
+		startTour({ force: true })
+	}
+	const thanks = box.querySelector('#help-say-thanks')
+	if (thanks)
+		thanks.onclick = () => {
+			toggleHelp(false)
+			openSupport()
+		}
+	box.scrollTop = 0
+	// The real preset path, rather than a guess: from a clone it is ./presets, but the desktop app
+	// keeps it in the per-user application-data folder.
+	api('/api/status')
+		.then((s) => {
+			if (!s?.presetDir) return
+			for (const c of box.querySelectorAll('.presetdir')) c.textContent = `${s.presetDir}/_backups/`
+		})
+		.catch(() => {
+			/* the words already read correctly without it */
+		})
+	// Escape closes it, like every other overlay in the app.
+	const onKey = (e) => {
+		if (e.key !== 'Escape') return
+		toggleHelp(false)
+		document.removeEventListener('keydown', onKey)
+	}
+	document.addEventListener('keydown', onKey)
+}
+
+/**
+ * Why a connect failed, in words someone can act on.
+ *
+ * These are the causes that actually happen, in the order they usually turn out to be true. The
+ * raw error still ships — under a disclosure, not as the headline.
+ */
+function connectDiagnosis(ip, message) {
+	const m = String(message ?? '')
+	const busy = {
+		what: 'Something else is already holding the switcher',
+		fix: 'An ATEM allows only a handful of control connections. Quit ATEM Software Control or Companion on any machine talking to this switcher, then try again.',
+	}
+	const power = { what: 'It is switched off, or still starting up', fix: 'Check the switcher is powered and its panel is lit. A cold start takes about half a minute.' }
+	const net = {
+		what: 'This machine is not on the switcher’s network',
+		fix: 'Studio Wi-Fi and the wired studio network are usually not the same network. Join the one the switcher is on — by cable if you can.',
+	}
+	const typo = { what: 'The address may be wrong', fix: 'ATEM Setup shows the switcher’s IP under its name. Straight from the factory it is 192.168.10.240.' }
+
+	if (/refus/i.test(m)) return { title: `${ip} answered, but refused the connection`, causes: [busy, typo] }
+	if (/unreach|ENETUNREACH|EHOSTUNREACH|no route/i.test(m)) return { title: `No route to ${ip}`, causes: [net, typo] }
+	if (/invalid|not a valid|ENOTFOUND|EAI_AGAIN/i.test(m)) return { title: `${ip} is not an address this can reach`, causes: [typo, net] }
+	return { title: `Nothing answered at ${ip}`, causes: [busy, power, net, typo] }
+}
+
+function renderConnectError(side, box) {
+	const { ip, message } = state[side].error
+	const d = connectDiagnosis(ip, message)
+	box.innerHTML =
+		'<div class="guide bad">' +
+		`<b class="ghead"><span class="gdot"></span>${esc(d.title)}</b>` +
+		'<p class="glead">Most likely, in this order:</p>' +
+		`<ol class="gcauses">${d.causes.map((c) => `<li><b>${esc(c.what)}</b><span>${esc(c.fix)}</span></li>`).join('')}</ol>` +
+		`<div class="gacts"><button class="primary retry">Try ${esc(ip)} again</button><span class="gnote">Nothing was changed on any switcher.</span></div>` +
+		`<details class="graw"><summary>Technical detail</summary><code>${esc(message)}</code></details>` +
+		'</div>'
+	box.querySelector('.retry').onclick = () => connectSide(side)
+}
+
+/** An empty library is a dead end unless it says how to fill one. The list column is 200px, so
+    it gets the headline and the import button; the how-to goes in the card column beside it. */
+function renderLibraryEmpty(side, list) {
+	const empty = el('div', 'libempty')
+	empty.innerHTML = '<b>No presets yet</b><p>Saved channels appear here.</p>'
+	const imp = el('label', 'filebtn small', 'Import file…')
+	const inp = el('input')
+	inp.type = 'file'
+	inp.accept = 'application/json'
+	inp.onchange = (e) => importFile(e)
+	imp.append(inp)
+	empty.append(imp)
+	list.append(empty)
+}
+
+function renderLibraryGuide(side, box) {
+	const other = side === 'A' ? 'right' : 'left'
+	box.innerHTML =
+		'<div class="guide">' +
+		'<b class="ghead">Nothing saved yet</b>' +
+		'<p class="glead">A preset is one channel’s whole sound — gain, EQ, dynamics — kept under a name. The mic chain you want back next month, or on the switcher in the other room.</p>' +
+		'<ol class="gsteps">' +
+		`<li><i>1</i><b>Put the library on the other side</b><span>Press <em>Presets</em> at the top of the ${other}-hand column. This side goes back to being a switcher.</span></li>` +
+		'<li><i>2</i><b>Pick the channel worth keeping</b><span>Its card appears on the left exactly as it will be stored — a preset always holds the whole channel.</span></li>' +
+		'<li><i>3</i><b>Name it and save</b><span>The blocks you have ticked become that preset’s defaults, so an EQ-only preset comes back ticked as one.</span></li>' +
+		'</ol>' +
+		'<p class="glead">Sent a preset by someone else? <em>Import file…</em> in the list beside this adds it to the library.</p>' +
+		`<p class="gfoot">Presets other people have dialled in — and the place to share yours — live in <a href="${LOOP_URL}" target="_blank" rel="noreferrer">the Studio Upgrade community</a>.</p>` +
+		'</div>'
+	const browse = el('button', 'primary')
+	browse.textContent = 'Browse community presets'
+	browse.onclick = () => openBrowser()
+	box.querySelector('.gsteps')?.after(browse)
+}
+
+/** What a preset was made with and for, under its card: mic, style, notes, a sample to hear. */
+function presetHead(p) {
+	const head = el('div', 'presethead')
+	const top = el('div', 'phtop')
+	top.append(el('b', 'phname', p.name ?? ''))
+	if (p.style) top.append(el('span', 'phstyle', p.style))
+	head.append(top)
+	const meta = [p.mic, p.device?.model, p.savedAt ? new Date(p.savedAt).toLocaleDateString() : null].filter(Boolean)
+	if (meta.length) head.append(el('div', 'phmeta', meta.join(' \u00b7 ')))
+	if (p.notes) head.append(el('div', 'phnotes', p.notes))
+	if (p.sampleUrl && /^https?:\/\//.test(p.sampleUrl)) {
+		const a = el('a', 'phsample', 'Hear a sample')
+		a.href = p.sampleUrl
+		a.target = '_blank'
+		a.rel = 'noreferrer'
+		head.append(a)
+	}
+	return head
+}
+
+/**
+ * Fill a library row's thumbnail. The listing carries no band data, so bodies load lazily — a few
+ * at a time, cached where selection already looks, and a row without a thumbnail still works.
+ */
+function paintSpark(file, box) {
+	const draw = (body) => {
+		const eq = body?.channel?.eq ?? body?.channel?.equalizer
+		if (eq) box.innerHTML = eqSparkline(eq, 52, 28)
+	}
+	const lib = state.library
+	if (lib.cache[file]) return draw(lib.cache[file])
+	lib.sparkQ ??= []
+	lib.sparkN ??= 0
+	lib.sparkQ.push([file, draw])
+	const pump = async () => {
+		if (lib.sparkN >= 4 || !lib.sparkQ.length) return
+		lib.sparkN++
+		const [f, cb] = lib.sparkQ.shift()
+		try {
+			lib.cache[f] = lib.cache[f] ?? (await api(`/api/presets/${encodeURIComponent(f)}`))
+			cb(lib.cache[f])
+		} catch {
+			/* a row without a thumbnail still works */
+		}
+		lib.sparkN--
+		pump()
+	}
+	pump()
+}
+
+// ------------------------------------------------------------------ progress and outcome
+
+/**
+ * A copy is three round trips — back up, write, read back — and takes a few seconds. Say what is
+ * happening and name the destinations, rather than freezing the button and hoping.
+ *
+ * The stages are not faked into a progress bar: the server reports once, at the end, so this
+ * shows what the request covers and how long it has been going, and nothing it cannot know.
+ */
+function showProgress(targets, title) {
+	const overlay = el('div', 'modal-overlay')
+	const boxEl = el('div', 'modal progress')
+	boxEl.setAttribute('role', 'dialog')
+	boxEl.setAttribute('aria-modal', 'true')
+	boxEl.innerHTML =
+		`<h3>${esc(title)}<span class="elapsed"></span></h3>` +
+		'<div class="bar"><i></i></div>' +
+		'<p class="pstages">Backing up each destination, writing the settings, then reading them back to check they took.</p>' +
+		`<ul class="ptargets">${targets.map((t) => `<li><span class="dot"></span>${esc(t.label)}</li>`).join('')}</ul>` +
+		'<p class="muted">Nothing is final until the read-back agrees — and Undo restores the whole batch.</p>'
+	overlay.append(boxEl)
+	document.body.append(overlay)
+	const t0 = Date.now()
+	const tick = setInterval(() => {
+		const s = Math.round((Date.now() - t0) / 1000)
+		const e = boxEl.querySelector('.elapsed')
+		if (e) e.textContent = s >= 2 ? ` · ${s}s` : ''
+	}, 250)
+	return () => {
+		clearInterval(tick)
+		overlay.remove()
+	}
+}
+
+/**
+ * Notifications: one stack, top right, floating over everything.
+ *
+ * Everything the app has to say after an action lands here — a copy that worked, a preset that
+ * published, a warning that something is missing. Successes clear themselves; anything that failed,
+ * or that offers an Undo, stays until it is dismissed, because those are the ones worth reading.
+ */
+const TOAST_LIFE = { ok: 8000, warn: 11000, err: 0 }
+
+function notify(kind, headline, detail, opts = {}) {
+	const stack = $('#toasts')
+	if (!stack) return
+	const card = el('div', `toast ${kind}`)
+	card.append(el('span', 'odot'))
+	const words = el('div', 'owords')
+	words.append(el('div', 'ohead', headline))
+	if (detail) words.append(el('div', 'odetail', detail))
+	card.append(words)
+
+	const acts = el('div', 'oacts')
+	if (opts.undo) {
+		const b = el('button', null, 'Undo')
+		b.onclick = () => {
+			close()
+			undo()
+		}
+		acts.append(b)
+	}
+	if (opts.details) {
+		const b = el('button', null, 'What changed')
+		b.onclick = showResult
+		acts.append(b)
+	}
+	if (acts.children.length) words.append(acts)
+
+	// The moment something just worked is the honest moment to ask — quietly, as a link.
+	if (opts.support && SUPPORT_URL) {
+		const a = el('a', 'osupport', 'Useful? Say thanks')
+		a.href = SUPPORT_URL
+		a.onclick = (ev) => {
+			ev.preventDefault()
+			openSupport()
+		}
+		words.append(a)
+	}
+
+	const x = el('button', 'oclose', '×')
+	x.title = 'Dismiss'
+	x.setAttribute('aria-label', 'Dismiss this message')
+	card.append(x)
+
+	let timer = null
+	const close = () => {
+		clearTimeout(timer)
+		card.classList.add('out')
+		setTimeout(() => card.remove(), 160)
+	}
+	x.onclick = close
+
+	// Newest at the top, and never more than a screenful.
+	stack.prepend(card)
+	while (stack.children.length > 4) stack.lastElementChild.remove()
+	requestAnimationFrame(() => card.classList.add('in'))
+
+	const life = opts.sticky || opts.undo ? 0 : (TOAST_LIFE[kind] ?? 8000)
+	if (life) {
+		timer = setTimeout(close, life)
+		// Reading it should not race the clock.
+		card.onmouseenter = () => clearTimeout(timer)
+		card.onmouseleave = () => {
+			timer = setTimeout(close, 2500)
+		}
+	}
+	return card
+}
+
+/** Kept for every existing caller — an outcome is just a notification with actions. */
+function showOutcome(kind, headline, detail, opts = {}) {
+	return notify(kind, headline, detail, opts)
+}
+
+function hideOutcome() {
+	const stack = $('#toasts')
+	if (stack) stack.textContent = ''
+}
+
+// The flow divider is a plain sibling of the two columns, so it has no natural height — track the
+// taller column so it spans exactly the panels, not the empty space below them. Arrows are real
+// elements rather than a tiled background, so a whole number of them always fits and none is ever
+// clipped mid-triangle; the row centres whatever fits.
+function sizeFlowDivider() {
+	const div = $('.flowdiv')
+	if (!div) return
+	const arrow = 14
+	const gap = 42
+	// Below the stacking breakpoint the columns sit one above the other, so the divider runs
+	// horizontally and takes its length from its own width instead of the panels' height.
+	const stacked = window.matchMedia('(max-width: 1100px)').matches
+	let usable
+	if (stacked) {
+		div.style.height = ''
+		usable = div.clientWidth - 28
+	} else {
+		const h = Math.max(panel('A').offsetHeight, panel('B').offsetHeight)
+		div.style.height = h > 0 ? `${h}px` : ''
+		usable = h - 28
+	}
+	const count = usable > 0 ? Math.max(1, Math.floor((usable + gap) / (arrow + gap))) : 0
+	if (div.children.length === count) return
+	div.textContent = ''
+	for (let i = 0; i < count; i++) div.append(el('span', 'flowarrow'))
+}
+if (window.ResizeObserver) {
+	const flowRO = new ResizeObserver(sizeFlowDivider)
+	flowRO.observe(panel('A'))
+	flowRO.observe(panel('B'))
+}
+window.addEventListener('resize', sizeFlowDivider)
+sizeFlowDivider()
+
+// First ever load with nothing connected: the tour introduces itself rather than waiting to be
+// found. Tips.sequence's own seen-flag means it happens once.
+window.addEventListener('load', () => {
+	if (!state.A.channels?.length) setTimeout(() => startTour(), 500)
+})
+
+renderRecent()

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 24" role="img" aria-label="ATEM Audio Presets">
+&#x9;<g>
+&#x9;&#x9;<rect x="2" y="18.8" width="7" height="3.2" rx="1" fill="#FF6238"></rect>
+&#x9;&#x9;<rect x="2" y="14.6" width="7" height="3.2" rx="1" fill="#FF6238"></rect>
+&#x9;&#x9;<rect x="2" y="10.4" width="7" height="3.2" rx="1" fill="#FFC310"></rect>
+&#x9;&#x9;<rect x="2" y="6.2" width="7" height="3.2" rx="1" fill="#FFC310"></rect>
+&#x9;&#x9;<rect x="2" y="2.0" width="7" height="3.2" rx="1" fill="#C60039"></rect>
+
+&#x9;&#x9;<rect x="11" y="18.8" width="7" height="3.2" rx="1" fill="#FF6238"></rect>
+&#x9;&#x9;<rect x="11" y="14.6" width="7" height="3.2" rx="1" fill="#FF6238"></rect>
+&#x9;&#x9;<rect x="11" y="10.4" width="7" height="3.2" rx="1" fill="#FFC310"></rect>
+&#x9;&#x9;<rect x="11" y="6.2" width="7" height="3.2" rx="1" fill="#3a3230" opacity="0.55"></rect>
+&#x9;&#x9;<rect x="11" y="2.0" width="7" height="3.2" rx="1" fill="#3a3230" opacity="0.55"></rect>
+&#x9;</g>
+</svg>

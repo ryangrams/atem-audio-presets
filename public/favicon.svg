@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="ATEM Audio Presets">
+&#x9;<rect width="32" height="32" rx="7" fill="#1f1f1f"></rect>
+&#x9;<rect x="6.5" y="7" width="4" height="18" rx="2" fill="#8b8b8b"></rect>
+&#x9;<rect x="21.5" y="7" width="4" height="18" rx="2" fill="#8b8b8b"></rect>
+&#x9;<path d="M12.5 16h6.4" fill="none" stroke="#3ec97a" stroke-width="2.4" stroke-linecap="round"></path>
+&#x9;<path d="M16.6 13.3 19.3 16l-2.7 2.7" fill="none" stroke="#3ec97a" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
