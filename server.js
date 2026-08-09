@@ -96,7 +96,9 @@ app.post(
 	})
 )
 
-app.get('/api/status', (_req, res) => res.json({ connections: status() }))
+// The UI has to be able to tell the user where their presets and backups actually are: from a clone
+// that is ./presets, but the packaged app passes a per-user directory instead.
+app.get('/api/status', (_req, res) => res.json({ connections: status(), presetDir: PRESET_DIR }))
 
 // ---------------------------------------------------------------- copy / apply
 
@@ -290,6 +292,9 @@ app.get(
 					group: body.group ?? '',
 					order: typeof body.order === 'number' ? body.order : 0,
 					defaultSections: body.defaultSections ?? null,
+					// What the preset was made with and for — the fields the library list shows.
+					mic: body.mic ?? null,
+					style: body.style ?? null,
 					summary: body.channel ? summarizeChannel(body.channel) : null,
 				})
 			} catch {
@@ -418,6 +423,11 @@ app.post(
 				group: body.group ?? '',
 				defaultSections: body.defaultSections ?? null,
 				device: body.device ? { model: body.device.model ?? null, release: body.device.release ?? null, build: body.device.build ?? null } : null,
+				// The community fields travel with the preset — a pack without them is just numbers.
+				mic: body.mic ?? null,
+				style: body.style ?? null,
+				notes: body.notes ?? null,
+				sampleUrl: body.sampleUrl ?? null,
 				channel: body.channel,
 			})
 		}
@@ -472,6 +482,11 @@ app.post(
 				savedAt: new Date().toISOString(),
 				importedFrom: String(pack.name ?? '').slice(0, 120) || null,
 				device: entry.device ?? null,
+				// Same whitelist idea as everything else in an import: known fields, clamped.
+				mic: entry.mic ? String(entry.mic).slice(0, 120) : null,
+				style: entry.style ? String(entry.style).slice(0, 60) : null,
+				notes: entry.notes ? String(entry.notes).slice(0, 2000) : null,
+				sampleUrl: typeof entry.sampleUrl === 'string' && /^https?:\/\//.test(entry.sampleUrl) ? entry.sampleUrl.slice(0, 300) : null,
 				channel: entry.channel,
 			}
 			await fs.writeFile(path.join(PRESET_DIR, file), JSON.stringify(body, null, 2))
@@ -490,6 +505,42 @@ app.delete(
 		await backupPreset(file)
 		await fs.unlink(path.join(PRESET_DIR, file))
 		res.json({ deleted: file })
+	})
+)
+
+// ---------------------------------------------------------------- community catalogue
+
+/**
+ * The preset browser is a client of a catalogue that lives on the internet, not on this machine.
+ *
+ * It is proxied through here for three reasons: the page is served from 127.0.0.1 and would need
+ * CORS otherwise; the desktop app has no guarantee of a browser's cookie jar; and a single choke
+ * point means one place to time out, one place to fail politely, and one place to change when the
+ * catalogue moves. Nothing here can reach a switcher — it is reads, ratings and comments only.
+ */
+const CATALOGUE = process.env.ATEM_CATALOGUE_URL || 'https://presets.studioupgrade.com/api'
+
+app.use(
+	'/api/community',
+	wrap(async (req, res) => {
+		const url = `${CATALOGUE}${req.path}${req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : ''}`
+		const ctrl = new AbortController()
+		// A studio LAN with no route out should fail in seconds, not hang the browser.
+		const timer = setTimeout(() => ctrl.abort(), 8000)
+		try {
+			const upstream = await fetch(url, {
+				method: req.method,
+				headers: { 'Content-Type': 'application/json', 'User-Agent': 'atem-audio-presets' },
+				body: req.method === 'GET' || req.method === 'HEAD' ? undefined : JSON.stringify(req.body ?? {}),
+				signal: ctrl.signal,
+			})
+			const text = await upstream.text()
+			res.status(upstream.status).type('application/json').send(text)
+		} catch (e) {
+			throw new HttpError(503, e.name === 'AbortError' ? 'The preset catalogue did not answer' : `Cannot reach the preset catalogue: ${e.message}`)
+		} finally {
+			clearTimeout(timer)
+		}
 	})
 )
 
