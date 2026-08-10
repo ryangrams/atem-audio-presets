@@ -1,0 +1,221 @@
+{
+  "format": "atem-audio-preset",
+  "version": 1,
+  "name": "PodMic warm read",
+  "group": "Broadcast mics",
+  "mic": "Rode PodMic",
+  "style": "Podcast voice",
+  "notes": "Warmer, closer podcast read. 75 Hz high-pass, a touch of 200 Hz reduction so it does not get muddy up close, a modest 4 kHz presence lift and a little 8 kHz air. Comp 3:1 for an even, produced read. Set your own input gain.",
+  "author": "Studio Upgrade",
+  "defaultSections": {
+    "gain": false,
+    "volume": false,
+    "pan": false,
+    "eq": true,
+    "dynamics": true,
+    "inputConfig": false
+  },
+  "device": {
+    "model": "ATEM Mini Extreme ISO",
+    "release": "10.3",
+    "build": null
+  },
+  "channel": {
+    "meta": {
+      "inputId": 1001,
+      "sourceId": "-256",
+      "label": "PodMic warm read",
+      "shortName": "PodM",
+      "inputType": 2,
+      "sourceType": 0,
+      "configuration": 1,
+      "inputLevel": 1,
+      "maxFramesDelay": 8,
+      "hasStereoSimulation": false,
+      "supportedMixOptions": [
+        1,
+        2
+      ],
+      "supportedConfigurations": [
+        1
+      ],
+      "supportedInputLevels": [
+        1,
+        4
+      ]
+    },
+    "levels": {
+      "gain": 0,
+      "faderGain": 0,
+      "balance": 0,
+      "framesDelay": 0,
+      "stereoSimulation": 0
+    },
+    "eq": {
+      "enabled": true,
+      "gain": 0,
+      "bands": [
+        {
+          "bandEnabled": true,
+          "shape": 16,
+          "frequencyRange": 1,
+          "frequency": 75,
+          "gain": 0,
+          "qFactor": 71,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": true,
+          "shape": 4,
+          "frequencyRange": 2,
+          "frequency": 200,
+          "gain": -150,
+          "qFactor": 90,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": true,
+          "shape": 4,
+          "frequencyRange": 2,
+          "frequency": 900,
+          "gain": 100,
+          "qFactor": 90,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": true,
+          "shape": 4,
+          "frequencyRange": 4,
+          "frequency": 4000,
+          "gain": 250,
+          "qFactor": 90,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": true,
+          "shape": 32,
+          "frequencyRange": 8,
+          "frequency": 8000,
+          "gain": 150,
+          "qFactor": 71,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": false,
+          "shape": 4,
+          "frequencyRange": 8,
+          "frequency": 12000,
+          "gain": 0,
+          "qFactor": 100,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        }
+      ]
+    },
+    "dynamics": {
+      "makeUpGain": 350,
+      "expander": {
+        "expanderEnabled": true,
+        "gateEnabled": false,
+        "threshold": -4500,
+        "range": 1800,
+        "ratio": 200,
+        "attack": 100,
+        "hold": 1000,
+        "release": 12000
+      },
+      "compressor": {
+        "compressorEnabled": true,
+        "threshold": -1600,
+        "ratio": 300,
+        "attack": 300,
+        "hold": 0,
+        "release": 11000
+      },
+      "limiter": {
+        "limiterEnabled": true,
+        "threshold": -1200,
+        "attack": 71,
+        "hold": 0,
+        "release": 9300
+      }
+    }
+  }
+}

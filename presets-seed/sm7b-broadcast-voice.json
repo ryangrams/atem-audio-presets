@@ -1,0 +1,221 @@
+{
+  "format": "atem-audio-preset",
+  "version": 1,
+  "name": "SM7B broadcast voice",
+  "group": "Broadcast mics",
+  "mic": "Shure SM7B",
+  "style": "Broadcast voice",
+  "notes": "Close-talked, pop filter on. 80 Hz high-pass clears desk rumble; a small 250 Hz dip removes boxiness; the 3.5 kHz presence lift cuts through camera audio — pull band 4 back if it reads harsh. Comp is a gentle 3:1 catching a few dB on speech. Set your own input gain (the SM7B wants a lot; a Cloudlifter helps). Based on common SM7B broadcast practice (80 Hz LC, 3–5 kHz presence, 3:1 ~-18 dB).",
+  "author": "Studio Upgrade",
+  "defaultSections": {
+    "gain": false,
+    "volume": false,
+    "pan": false,
+    "eq": true,
+    "dynamics": true,
+    "inputConfig": false
+  },
+  "device": {
+    "model": "ATEM Mini Extreme ISO",
+    "release": "10.3",
+    "build": null
+  },
+  "channel": {
+    "meta": {
+      "inputId": 1001,
+      "sourceId": "-256",
+      "label": "SM7B broadcast voice",
+      "shortName": "SM7B",
+      "inputType": 2,
+      "sourceType": 0,
+      "configuration": 1,
+      "inputLevel": 1,
+      "maxFramesDelay": 8,
+      "hasStereoSimulation": false,
+      "supportedMixOptions": [
+        1,
+        2
+      ],
+      "supportedConfigurations": [
+        1
+      ],
+      "supportedInputLevels": [
+        1,
+        4
+      ]
+    },
+    "levels": {
+      "gain": 0,
+      "faderGain": 0,
+      "balance": 0,
+      "framesDelay": 0,
+      "stereoSimulation": 0
+    },
+    "eq": {
+      "enabled": true,
+      "gain": 0,
+      "bands": [
+        {
+          "bandEnabled": true,
+          "shape": 16,
+          "frequencyRange": 1,
+          "frequency": 80,
+          "gain": 0,
+          "qFactor": 71,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": true,
+          "shape": 4,
+          "frequencyRange": 2,
+          "frequency": 250,
+          "gain": -200,
+          "qFactor": 100,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": true,
+          "shape": 4,
+          "frequencyRange": 2,
+          "frequency": 1200,
+          "gain": 100,
+          "qFactor": 90,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": true,
+          "shape": 4,
+          "frequencyRange": 4,
+          "frequency": 3500,
+          "gain": 300,
+          "qFactor": 80,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": true,
+          "shape": 32,
+          "frequencyRange": 8,
+          "frequency": 10000,
+          "gain": 200,
+          "qFactor": 71,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": false,
+          "shape": 4,
+          "frequencyRange": 8,
+          "frequency": 12000,
+          "gain": 0,
+          "qFactor": 100,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        }
+      ]
+    },
+    "dynamics": {
+      "makeUpGain": 400,
+      "expander": {
+        "expanderEnabled": true,
+        "gateEnabled": false,
+        "threshold": -4500,
+        "range": 2000,
+        "ratio": 200,
+        "attack": 100,
+        "hold": 1000,
+        "release": 12000
+      },
+      "compressor": {
+        "compressorEnabled": true,
+        "threshold": -1800,
+        "ratio": 300,
+        "attack": 300,
+        "hold": 0,
+        "release": 12000
+      },
+      "limiter": {
+        "limiterEnabled": true,
+        "threshold": -1200,
+        "attack": 71,
+        "hold": 0,
+        "release": 9300
+      }
+    }
+  }
+}

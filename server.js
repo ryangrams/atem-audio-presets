@@ -26,6 +26,40 @@ const PORT = Number(process.env.PORT ?? 8730)
  */
 const PRESET_DIR = process.env.ATEM_PRESET_DIR || path.join(__dirname, 'presets')
 const BACKUP_DIR = path.join(PRESET_DIR, '_backups')
+// Starter presets shipped with the app, copied into the user's library the first time it runs.
+const SEED_DIR = path.join(__dirname, 'presets-seed')
+// A once-ever marker so emptying your library never re-seeds it behind your back.
+const SEED_MARKER = path.join(PRESET_DIR, '.seeded')
+
+/**
+ * First-run seeding: drop the Studio Upgrade starter presets into a brand-new library so the app
+ * is useful before you have saved anything of your own. Runs once — the marker file means deleting
+ * every preset afterwards is respected, not undone. A collision with an existing filename is skipped,
+ * never overwritten. Any failure here is non-fatal; an empty library is a fine state to start in.
+ */
+async function seedPresetsIfEmpty() {
+	try {
+		await fs.mkdir(PRESET_DIR, { recursive: true })
+		if (await fs.access(SEED_MARKER).then(() => true).catch(() => false)) return
+		const existing = new Set((await fs.readdir(PRESET_DIR)).filter((f) => f.endsWith('.json')))
+		let seeds
+		try {
+			seeds = (await fs.readdir(SEED_DIR)).filter((f) => f.endsWith('.json'))
+		} catch {
+			return // no seed dir bundled — nothing to do
+		}
+		let copied = 0
+		for (const file of seeds) {
+			if (existing.has(file)) continue
+			await fs.copyFile(path.join(SEED_DIR, file), path.join(PRESET_DIR, file))
+			copied++
+		}
+		await fs.writeFile(SEED_MARKER, new Date().toISOString() + '\n')
+		if (copied) console.log(`Seeded ${copied} starter preset${copied === 1 ? '' : 's'} into ${PRESET_DIR}`)
+	} catch (err) {
+		console.warn('Preset seeding skipped:', err.message)
+	}
+}
 
 const app = express()
 app.use(express.json({ limit: '4mb' }))
@@ -576,6 +610,7 @@ let httpServer = null
  * second copy — or anything else already on 8730 — cannot collide.
  */
 export function start({ port = PORT, host = '127.0.0.1' } = {}) {
+	seedPresetsIfEmpty() // fire-and-forget; the library is ready by the time anyone opens it
 	return new Promise((resolve, reject) => {
 		const s = app.listen(port, host, () => {
 			httpServer = s

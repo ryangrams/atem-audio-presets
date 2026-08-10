@@ -1,0 +1,221 @@
+{
+  "format": "atem-audio-preset",
+  "version": 1,
+  "name": "AM radio",
+  "group": "Creative",
+  "mic": "Any mic",
+  "style": "Effect",
+  "notes": "A vintage AM-broadcast voice — a little fuller than the telephone. Band-pass roughly 400 Hz–4.5 kHz, a presence honk around 1.8 kHz, and hard compression for that pumped, level-crushed radio sound. Like the telephone preset, the ATEM supplies the band-limiting and squash but not the analogue crunch. Fun on an announcer channel.",
+  "author": "Studio Upgrade",
+  "defaultSections": {
+    "gain": false,
+    "volume": false,
+    "pan": false,
+    "eq": true,
+    "dynamics": true,
+    "inputConfig": false
+  },
+  "device": {
+    "model": "ATEM Mini Extreme ISO",
+    "release": "10.3",
+    "build": null
+  },
+  "channel": {
+    "meta": {
+      "inputId": 1001,
+      "sourceId": "-256",
+      "label": "AM radio",
+      "shortName": "AM",
+      "inputType": 2,
+      "sourceType": 0,
+      "configuration": 1,
+      "inputLevel": 1,
+      "maxFramesDelay": 8,
+      "hasStereoSimulation": false,
+      "supportedMixOptions": [
+        1,
+        2
+      ],
+      "supportedConfigurations": [
+        1
+      ],
+      "supportedInputLevels": [
+        1,
+        4
+      ]
+    },
+    "levels": {
+      "gain": 0,
+      "faderGain": 0,
+      "balance": 0,
+      "framesDelay": 0,
+      "stereoSimulation": 0
+    },
+    "eq": {
+      "enabled": true,
+      "gain": 0,
+      "bands": [
+        {
+          "bandEnabled": true,
+          "shape": 16,
+          "frequencyRange": 2,
+          "frequency": 400,
+          "gain": 0,
+          "qFactor": 100,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": true,
+          "shape": 4,
+          "frequencyRange": 2,
+          "frequency": 800,
+          "gain": -200,
+          "qFactor": 100,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": true,
+          "shape": 4,
+          "frequencyRange": 2,
+          "frequency": 1800,
+          "gain": 500,
+          "qFactor": 90,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": true,
+          "shape": 4,
+          "frequencyRange": 4,
+          "frequency": 3000,
+          "gain": 200,
+          "qFactor": 100,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": true,
+          "shape": 32,
+          "frequencyRange": 4,
+          "frequency": 4000,
+          "gain": -300,
+          "qFactor": 71,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": true,
+          "shape": 2,
+          "frequencyRange": 4,
+          "frequency": 4500,
+          "gain": 0,
+          "qFactor": 100,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        }
+      ]
+    },
+    "dynamics": {
+      "makeUpGain": 350,
+      "expander": {
+        "expanderEnabled": false,
+        "gateEnabled": false,
+        "threshold": -4500,
+        "range": 2000,
+        "ratio": 200,
+        "attack": 100,
+        "hold": 1000,
+        "release": 10000
+      },
+      "compressor": {
+        "compressorEnabled": true,
+        "threshold": -2200,
+        "ratio": 500,
+        "attack": 100,
+        "hold": 0,
+        "release": 7000
+      },
+      "limiter": {
+        "limiterEnabled": true,
+        "threshold": -800,
+        "attack": 30,
+        "hold": 0,
+        "release": 4000
+      }
+    }
+  }
+}

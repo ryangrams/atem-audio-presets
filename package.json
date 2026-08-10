@@ -12,6 +12,7 @@
     "server.js",
     "lib/",
     "public/",
+    "presets-seed/",
     "README.md",
     "LICENSE"
   ],
@@ -68,6 +69,7 @@
       "electron/**/*",
       "lib/**/*",
       "public/**/*",
+      "presets-seed/**/*",
       "server.js",
       "package.json"
     ],

@@ -1,0 +1,221 @@
+{
+  "format": "atem-audio-preset",
+  "version": 1,
+  "name": "Voice safety net",
+  "group": "Utility",
+  "mic": "Any mic",
+  "style": "Safety net",
+  "notes": "No tone-shaping at all — the honest flat one. Every EQ band is off. It adds only a gentle gate to close the mic between sentences and a brake limiter to catch peaks before they clip. Copy this onto a channel you have not had time to tune: it will not colour the sound, it just keeps it safe.",
+  "author": "Studio Upgrade",
+  "defaultSections": {
+    "gain": false,
+    "volume": false,
+    "pan": false,
+    "eq": true,
+    "dynamics": true,
+    "inputConfig": false
+  },
+  "device": {
+    "model": "ATEM Mini Extreme ISO",
+    "release": "10.3",
+    "build": null
+  },
+  "channel": {
+    "meta": {
+      "inputId": 1001,
+      "sourceId": "-256",
+      "label": "Voice safety net",
+      "shortName": "Safe",
+      "inputType": 2,
+      "sourceType": 0,
+      "configuration": 1,
+      "inputLevel": 1,
+      "maxFramesDelay": 8,
+      "hasStereoSimulation": false,
+      "supportedMixOptions": [
+        1,
+        2
+      ],
+      "supportedConfigurations": [
+        1
+      ],
+      "supportedInputLevels": [
+        1,
+        4
+      ]
+    },
+    "levels": {
+      "gain": 0,
+      "faderGain": 0,
+      "balance": 0,
+      "framesDelay": 0,
+      "stereoSimulation": 0
+    },
+    "eq": {
+      "enabled": true,
+      "gain": 0,
+      "bands": [
+        {
+          "bandEnabled": false,
+          "shape": 16,
+          "frequencyRange": 1,
+          "frequency": 80,
+          "gain": 0,
+          "qFactor": 71,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": false,
+          "shape": 4,
+          "frequencyRange": 2,
+          "frequency": 250,
+          "gain": 0,
+          "qFactor": 100,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": false,
+          "shape": 4,
+          "frequencyRange": 2,
+          "frequency": 1000,
+          "gain": 0,
+          "qFactor": 100,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": false,
+          "shape": 4,
+          "frequencyRange": 4,
+          "frequency": 3500,
+          "gain": 0,
+          "qFactor": 100,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": false,
+          "shape": 32,
+          "frequencyRange": 8,
+          "frequency": 10000,
+          "gain": 0,
+          "qFactor": 71,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": false,
+          "shape": 4,
+          "frequencyRange": 8,
+          "frequency": 12000,
+          "gain": 0,
+          "qFactor": 100,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        }
+      ]
+    },
+    "dynamics": {
+      "makeUpGain": 0,
+      "expander": {
+        "expanderEnabled": true,
+        "gateEnabled": false,
+        "threshold": -5000,
+        "range": 1500,
+        "ratio": 200,
+        "attack": 100,
+        "hold": 1500,
+        "release": 10000
+      },
+      "compressor": {
+        "compressorEnabled": false,
+        "threshold": -2000,
+        "ratio": 300,
+        "attack": 200,
+        "hold": 0,
+        "release": 12000
+      },
+      "limiter": {
+        "limiterEnabled": true,
+        "threshold": -1000,
+        "attack": 50,
+        "hold": 0,
+        "release": 5000
+      }
+    }
+  }
+}

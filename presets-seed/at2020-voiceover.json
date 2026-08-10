@@ -1,0 +1,221 @@
+{
+  "format": "atem-audio-preset",
+  "version": 1,
+  "name": "AT2020 voiceover",
+  "group": "Broadcast mics",
+  "mic": "Audio-Technica AT2020",
+  "style": "Voiceover",
+  "notes": "Large-diaphragm condenser for a treated-room voiceover. 90 Hz high-pass, a gentle 300 Hz scoop for a cleaner low-mid, a broad 3 kHz presence and an air shelf at 12 kHz. A condenser hears the whole room, so the gate is a touch firmer. Smooth 3:1. Best in a quiet space.",
+  "author": "Studio Upgrade",
+  "defaultSections": {
+    "gain": false,
+    "volume": false,
+    "pan": false,
+    "eq": true,
+    "dynamics": true,
+    "inputConfig": false
+  },
+  "device": {
+    "model": "ATEM Mini Extreme ISO",
+    "release": "10.3",
+    "build": null
+  },
+  "channel": {
+    "meta": {
+      "inputId": 1001,
+      "sourceId": "-256",
+      "label": "AT2020 voiceover",
+      "shortName": "VO",
+      "inputType": 2,
+      "sourceType": 0,
+      "configuration": 1,
+      "inputLevel": 1,
+      "maxFramesDelay": 8,
+      "hasStereoSimulation": false,
+      "supportedMixOptions": [
+        1,
+        2
+      ],
+      "supportedConfigurations": [
+        1
+      ],
+      "supportedInputLevels": [
+        1,
+        4
+      ]
+    },
+    "levels": {
+      "gain": 0,
+      "faderGain": 0,
+      "balance": 0,
+      "framesDelay": 0,
+      "stereoSimulation": 0
+    },
+    "eq": {
+      "enabled": true,
+      "gain": 0,
+      "bands": [
+        {
+          "bandEnabled": true,
+          "shape": 16,
+          "frequencyRange": 1,
+          "frequency": 90,
+          "gain": 0,
+          "qFactor": 71,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": true,
+          "shape": 4,
+          "frequencyRange": 2,
+          "frequency": 300,
+          "gain": -150,
+          "qFactor": 90,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": true,
+          "shape": 4,
+          "frequencyRange": 2,
+          "frequency": 1000,
+          "gain": 50,
+          "qFactor": 90,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": true,
+          "shape": 4,
+          "frequencyRange": 4,
+          "frequency": 3000,
+          "gain": 200,
+          "qFactor": 100,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": true,
+          "shape": 32,
+          "frequencyRange": 8,
+          "frequency": 12000,
+          "gain": 200,
+          "qFactor": 71,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        },
+        {
+          "bandEnabled": false,
+          "shape": 4,
+          "frequencyRange": 8,
+          "frequency": 14000,
+          "gain": 0,
+          "qFactor": 100,
+          "supportedShapes": [
+            1,
+            2,
+            4,
+            8,
+            16,
+            32
+          ],
+          "supportedFrequencyRanges": [
+            1,
+            2,
+            4,
+            8
+          ]
+        }
+      ]
+    },
+    "dynamics": {
+      "makeUpGain": 350,
+      "expander": {
+        "expanderEnabled": true,
+        "gateEnabled": false,
+        "threshold": -4200,
+        "range": 2200,
+        "ratio": 250,
+        "attack": 80,
+        "hold": 900,
+        "release": 10000
+      },
+      "compressor": {
+        "compressorEnabled": true,
+        "threshold": -1800,
+        "ratio": 300,
+        "attack": 300,
+        "hold": 0,
+        "release": 11000
+      },
+      "limiter": {
+        "limiterEnabled": true,
+        "threshold": -1200,
+        "attack": 71,
+        "hold": 0,
+        "release": 9300
+      }
+    }
+  }
+}
