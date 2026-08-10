@@ -1664,34 +1664,104 @@ function openIpMenu(side) {
 	const btn = p.querySelector('.ipmenu')
 	const input = p.querySelector('.ip')
 	const other = panel(side === 'A' ? 'B' : 'A').querySelector('.ip').value.trim()
-	const items = []
-	for (const ip of recentIps()) items.push({ ip, note: 'used before' })
-	if (other && !items.some((i) => i.ip === other)) items.push({ ip: other, note: 'the other column' })
-	if (!items.some((i) => i.ip === '192.168.10.240')) items.push({ ip: '192.168.10.240', note: 'ATEM factory default' })
-
 	const drop = el('div', 'ipdrop')
-	for (const it of items) {
-		const row = el('button', 'ipdroprow')
-		row.innerHTML = `<b>${esc(it.ip)}</b><span>${esc(it.note)}</span>`
-		row.onclick = () => {
-			input.value = it.ip
-			drop.remove()
-			btn.setAttribute('aria-expanded', 'false')
-			connectSide(side)
-		}
-		drop.append(row)
+
+	const closeMenu = () => {
+		drop.remove()
+		btn.setAttribute('aria-expanded', 'false')
 	}
-	const help = el('div', 'ipdrophelp', 'ATEM Setup lists the address under the switcher’s name.')
-	drop.append(help)
+	const pick = (ip) => {
+		input.value = ip
+		closeMenu()
+		connectSide(side)
+	}
+	const addRow = (cls, main, note, onclick) => {
+		const row = el('button', `ipdroprow${cls ? ' ' + cls : ''}`)
+		row.innerHTML = `<b>${esc(main)}</b><span>${esc(note)}</span>`
+		row.onclick = onclick
+		drop.append(row)
+		return row
+	}
+
+	// A fake switcher to explore with — always available, needs no network.
+	addRow('sample', 'Sample switcher', 'a fake ATEM, for trying things out', () => {
+		closeMenu()
+		if (!tourDemo) enterTourDemo()
+	})
+
+	// If this column is on a real switcher, offer to let it go.
+	if (state[side].device && state[side].ip && state[side].ip !== 'sample') {
+		addRow('disconnectrow', `Disconnect ${state[side].ip}`, 'free the switcher for another app', () => {
+			closeMenu()
+			disconnectSwitcher(side)
+		})
+	}
+
+	// Live discovery drops in above the remembered addresses as it finds things.
+	const scanning = el('div', 'ipdrophelp scanning', 'Looking for switchers on the network…')
+	drop.append(scanning)
+
+	for (const ip of recentIps()) addRow('', ip, 'used before', () => pick(ip))
+	if (other && other !== 'sample' && !recentIps().includes(other)) addRow('', other, 'the other column', () => pick(other))
+	if (!recentIps().includes('192.168.10.240')) addRow('', '192.168.10.240', 'ATEM factory default', () => pick('192.168.10.240'))
+	drop.append(el('div', 'ipdrophelp', 'ATEM Setup lists the address under the switcher’s name.'))
+
 	p.querySelector('.conn').append(drop)
 	btn.setAttribute('aria-expanded', 'true')
 	const away = (ev) => {
 		if (drop.contains(ev.target)) return
-		drop.remove()
-		btn.setAttribute('aria-expanded', 'false')
+		closeMenu()
 		document.removeEventListener('click', away)
 	}
 	setTimeout(() => document.addEventListener('click', away), 0)
+
+	// Ask the server to sweep the network. Found switchers appear at the top; addresses already in
+	// the list are not repeated.
+	discoverAtems().then((atems) => {
+		if (!drop.isConnected) return
+		scanning.remove()
+		const already = new Set([...drop.querySelectorAll('.ipdroprow b')].map((b) => b.textContent))
+		let anchor = drop.querySelector('.disconnectrow') || drop.querySelector('.ipdroprow.sample')
+		for (const a of atems) {
+			if (already.has(a.ip)) continue
+			const row = addRow('found', a.ip, `${a.model}${a.via === 'mdns' || String(a.via).includes('mdns') ? ' · found live' : ' · on the network'}`, () => pick(a.ip))
+			anchor.after(row)
+			anchor = row
+		}
+		if (!atems.length) drop.querySelector('.ipdrophelp:last-of-type')?.before(el('div', 'ipdrophelp', 'No switchers found automatically — type the address above.'))
+	})
+}
+
+/** Ask the server to find ATEMs, seeding the sweep with the addresses this app has used before. */
+async function discoverAtems() {
+	try {
+		const hints = recentIps().join(',')
+		const r = await api(`/api/discover?hints=${encodeURIComponent(hints)}`)
+		return r.atems ?? []
+	} catch {
+		return []
+	}
+}
+
+/** Let a switcher go — the ATEM allows only a few control connections, so freeing one matters. */
+async function disconnectSwitcher(side) {
+	const ip = state[side].ip
+	if (!ip || ip === 'sample') return
+	try {
+		await api('/api/disconnect', { method: 'POST', body: JSON.stringify({ ip }) })
+	} catch {
+		/* best-effort — the pool may already be closed */
+	}
+	// In one-switcher mode both columns share the connection, so reset both.
+	for (const s of state.two ? [side] : ['A', 'B']) {
+		state[s].device = null
+		state[s].channels = []
+		state[s].selection = []
+		state[s].detail = null
+		panel(s).querySelector('.device').innerHTML = '<span class="off">Not connected</span>'
+		if (!isLib(s)) renderSideAll(s)
+	}
+	notify('ok', `Disconnected ${ip}`)
 }
 
 for (const side of ['A', 'B']) {

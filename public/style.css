@@ -3706,3 +3706,52 @@ body.browsing {
 .toast:focus-within .oclose {
 	opacity: 1;
 }
+
+/* ---- address dropdown: sample, live-discovered switchers, disconnect ---- */
+
+.ipdroprow.sample b {
+	color: var(--warn);
+}
+.ipdroprow.found b {
+	color: var(--good);
+}
+.ipdroprow.found::before {
+	content: '●';
+	position: absolute;
+	left: -2px;
+	color: var(--good);
+	font-size: 8px;
+	line-height: 1;
+	top: 12px;
+}
+.ipdroprow.found {
+	padding-left: 14px;
+}
+.ipdroprow.disconnectrow b {
+	color: var(--bad);
+}
+.ipdrophelp.scanning {
+	color: var(--dim);
+}
+.ipdrophelp.scanning::before {
+	content: '';
+	display: inline-block;
+	width: 9px;
+	height: 9px;
+	margin-right: 6px;
+	border: 1.5px solid var(--line);
+	border-top-color: var(--accent);
+	border-radius: 50%;
+	vertical-align: -1px;
+	animation: ipspin 700ms linear infinite;
+}
+@keyframes ipspin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.ipdrophelp.scanning::before {
+		animation: none;
+	}
+}

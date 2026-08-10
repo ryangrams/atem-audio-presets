@@ -2,7 +2,7 @@
   "name": "atem-audio-presets",
   "productName": "ATEM Audio Presets",
   "version": "1.0.0",
-  "description": "Save, load and copy Fairlight audio settings \u2014 levels, EQ and dynamics \u2014 between channels, between ATEM switchers, and as named presets",
+  "description": "Save, load and copy Fairlight audio settings — levels, EQ and dynamics — between channels, between ATEM switchers, and as named presets",
   "type": "module",
   "main": "electron/main.js",
   "bin": {
@@ -49,6 +49,7 @@
   },
   "dependencies": {
     "atem-connection": "^3.9.0",
+    "bonjour-service": "^1.4.4",
     "express": "^4.21.2"
   },
   "devDependencies": {
@@ -58,7 +59,7 @@
   "build": {
     "appId": "com.ryangrams.atem-audio-presets",
     "productName": "ATEM Audio Presets",
-    "copyright": "Copyright \u00a9 2026 Ryan Grams",
+    "copyright": "Copyright © 2026 Ryan Grams",
     "directories": {
       "output": "dist",
       "buildResources": "build"

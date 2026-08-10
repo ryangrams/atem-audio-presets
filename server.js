@@ -12,6 +12,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { connect, disconnect, disconnectAll, firmwareInfo, status } from './lib/atem-pool.js'
 import { applyChannel, diffChannel, extractChannel, listChannels, summarizeChannel } from './lib/fairlight.js'
+import { discover } from './lib/discover.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT ?? 8730)
@@ -99,6 +100,19 @@ app.post(
 // The UI has to be able to tell the user where their presets and backups actually are: from a clone
 // that is ./presets, but the packaged app passes a per-user directory instead.
 app.get('/api/status', (_req, res) => res.json({ connections: status(), presetDir: PRESET_DIR }))
+
+// Find ATEMs on the network — mDNS plus an admin-API sweep of the caller's known /24s. `hints` is a
+// comma-separated list of addresses used before; their subnets are where switchers actually live.
+app.get(
+	'/api/discover',
+	wrap(async (req, res) => {
+		const hints = String(req.query.hints ?? '')
+			.split(',')
+			.map((s) => s.trim())
+			.filter(Boolean)
+		res.json(await discover({ hints }))
+	})
+)
 
 // ---------------------------------------------------------------- copy / apply
 
