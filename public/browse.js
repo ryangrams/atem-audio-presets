@@ -423,7 +423,9 @@ function catDetail() {
 	fork.onclick = () => startVariant(p)
 	acts.append(fork)
 
-	if (p.sampleUrl) {
+	// sampleUrl is attacker-controlled catalogue content — only ever render it as an http(s) link, so
+	// a "javascript:" URL can never become a clickable script in the app's origin.
+	if (p.sampleUrl && /^https?:\/\//i.test(p.sampleUrl)) {
 		const a = el('a', 'herosample', 'Hear it')
 		a.href = p.sampleUrl
 		a.target = '_blank'

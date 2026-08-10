@@ -15,6 +15,13 @@ const FS = 48000
 const SHAPE_NAME = { 1: 'Low shelf', 2: 'Low pass', 4: 'Bell', 8: 'Notch', 16: 'High pass', 32: 'High shelf' }
 const SHAPE_ABBR = { 1: 'LS', 2: 'LP', 4: 'Bell', 8: 'Notch', 16: 'HP', 32: 'HS' }
 
+// This card renders community presets — attacker-controlled data — into innerHTML, sharing an origin
+// with the local switcher-control server. Every interpolated string field is HTML-escaped so a
+// malicious meta.label or config name cannot inject markup. (Numeric fields go through formatters.)
+function escHtml(v) {
+	return String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+}
+
 /** RBJ cookbook coefficients. Gain arrives in hundredths of a dB, Q in hundredths. */
 function biquad(shape, freq, gainDb, qFactor) {
 	const w0 = (2 * Math.PI * freq) / FS
@@ -370,11 +377,11 @@ function renderStripCard(box, d, opts = {}) {
 	const strip = `<div class="strip">
 		${
 			opts.title
-				? `<div class="strip-name multi" title="${opts.title.label}">${opts.title.label}<span class="subname">${opts.title.sub}</span></div>`
+				? `<div class="strip-name multi" title="${escHtml(opts.title.label)}">${escHtml(opts.title.label)}<span class="subname">${escHtml(opts.title.sub)}</span></div>`
 				: // The switcher's own short name (≤4 chars, its own casing) — it always fits, so no
 					// uppercasing and no ellipsis. When none was captured (a preset, or the demo), derive
 					// an equally short one rather than ellipsising the full label.
-					`<div class="strip-name" title="${d.meta.label}">${d.meta.shortName || deriveShort(d.meta.label)}</div>`
+					`<div class="strip-name" title="${escHtml(d.meta.label)}">${escHtml(d.meta.shortName || deriveShort(d.meta.label))}</div>`
 		}
 		<div class="ctrl block${cls('gain')}" data-sec="gain"${a11y('gain', 'Gain')}>
 			<b>Gain</b>
@@ -400,8 +407,8 @@ function renderStripCard(box, d, opts = {}) {
 	const bands = (eq?.bands ?? [])
 		.map(
 			(b, i) => `<div class="band ${b?.bandEnabled ? '' : 'off'}">
-			<b>${i + 1}</b> ${b ? SHAPE_ABBR[b.shape] ?? b.shape : '—'}
-			<span>${b ? fHz(b.frequency) : ''}</span>
+			<b>${i + 1}</b> ${b ? escHtml(SHAPE_ABBR[b.shape] ?? b.shape) : '—'}
+			<span>${b ? escHtml(fHz(b.frequency)) : ''}</span>
 			${b && [1, 4, 32].includes(Number(b.shape)) ? `<span>${b.gain > 0 ? '+' : ''}${f1(b.gain)}</span><span>Q${(b.qFactor / 100).toFixed(1)}</span>` : ''}
 		</div>`
 		)
@@ -475,8 +482,8 @@ const LEVEL_NAME = { 1: 'Mic', 2: 'Consumer', 4: 'Pro line' }
 function inputConfig(shown, own, incoming) {
 	const row = (label, options, active, names) => {
 		if (!options?.length) return ''
-		return `<div class="cfgrow"><em>${label}</em><div class="segs">${options
-			.map((o) => `<span class="seg${o === active ? ' on' : ''}">${names[o] ?? o}</span>`)
+		return `<div class="cfgrow"><em>${escHtml(label)}</em><div class="segs">${options
+			.map((o) => `<span class="seg${o === active ? ' on' : ''}">${escHtml(names[o] ?? o)}</span>`)
 			.join('')}</div></div>`
 	}
 	const layout = row('Channels', own.supportedConfigurations, shown.configuration, CONFIG_NAME)
