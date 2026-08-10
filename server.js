@@ -478,6 +478,15 @@ app.post(
 			if (body.format !== 'atem-audio-preset' || !body.channel) continue
 			if (group !== undefined && (body.group ?? '') !== group) continue
 			presets.push({
+				// Stable community identity + licence travel with the preset so an exported pack can be
+				// submitted as-is and a variant keeps its lineage. Undefined fields are dropped by JSON.
+				id: body.id ?? undefined,
+				license: body.license ?? undefined,
+				forkedFrom: body.forkedFrom ?? undefined,
+				lineageRoot: body.lineageRoot ?? undefined,
+				originalAuthor: body.originalAuthor ?? undefined,
+				attribution: body.attribution ?? undefined,
+				changeNote: body.changeNote ?? undefined,
 				name: body.name ?? file.replace(/\.json$/, ''),
 				group: body.group ?? '',
 				defaultSections: body.defaultSections ?? null,

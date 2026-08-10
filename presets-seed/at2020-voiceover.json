@@ -1,12 +1,14 @@
 {
   "format": "atem-audio-preset",
   "version": 1,
+  "id": "ps_01kzhx3ez87khmk65t4e0kpap6",
   "name": "AT2020 voiceover",
   "group": "Broadcast mics",
   "mic": "Audio-Technica AT2020",
   "style": "Voiceover",
   "notes": "Large-diaphragm condenser for a treated-room voiceover. 90 Hz high-pass, a gentle 300 Hz scoop for a cleaner low-mid, a broad 3 kHz presence and an air shelf at 12 kHz. A condenser hears the whole room, so the gate is a touch firmer. Smooth 3:1. Best in a quiet space.",
   "author": "Studio Upgrade",
+  "license": "MIT",
   "defaultSections": {
     "gain": false,
     "volume": false,

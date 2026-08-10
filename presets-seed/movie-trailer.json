@@ -1,12 +1,14 @@
 {
   "format": "atem-audio-preset",
   "version": 1,
+  "id": "ps_01kzhx3jw8b73y6z3s0wte38fw",
   "name": "Movie-trailer voice",
   "group": "Creative",
   "mic": "Any mic",
   "style": "Effect",
   "notes": "\"In a world…\" — a big, deep announcer voice. A low-shelf lift under 120 Hz for chest and weight, a small 400 Hz cut to keep it from getting muddy, a controlled 3 kHz presence for diction, and slow, deep compression that never lets go. Works best on an already-deep voice on a good mic; it flatters, it does not manufacture.",
   "author": "Studio Upgrade",
+  "license": "MIT",
   "defaultSections": {
     "gain": false,
     "volume": false,

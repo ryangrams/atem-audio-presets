@@ -1,12 +1,14 @@
 {
   "format": "atem-audio-preset",
   "version": 1,
+  "id": "ps_01kzhx3hx0pe9220mrwqh3qwb9",
   "name": "Megaphone",
   "group": "Creative",
   "mic": "Any mic",
   "style": "Effect",
   "notes": "Bullhorn / PA-horn honk: a big midrange bump around 1.2 kHz, everything below 400 Hz and above 4 kHz thrown away, and heavy compression so it barks at a constant level. The ATEM does the tone and the squash; the fizzy distortion of a real horn is beyond it. A stylised \"announcement\" voice.",
   "author": "Studio Upgrade",
+  "license": "MIT",
   "defaultSections": {
     "gain": false,
     "volume": false,

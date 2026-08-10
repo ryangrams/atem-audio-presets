@@ -1,12 +1,14 @@
 {
   "format": "atem-audio-preset",
   "version": 1,
+  "id": "ps_01kzhx3nt0cz4j65k47pxfjdtf",
   "name": "SM7B broadcast voice",
   "group": "Broadcast mics",
   "mic": "Shure SM7B",
   "style": "Broadcast voice",
   "notes": "Close-talked, pop filter on. 80 Hz high-pass clears desk rumble; a small 250 Hz dip removes boxiness; the 3.5 kHz presence lift cuts through camera audio — pull band 4 back if it reads harsh. Comp is a gentle 3:1 catching a few dB on speech. Set your own input gain (the SM7B wants a lot; a Cloudlifter helps). Based on common SM7B broadcast practice (80 Hz LC, 3–5 kHz presence, 3:1 ~-18 dB).",
   "author": "Studio Upgrade",
+  "license": "MIT",
   "defaultSections": {
     "gain": false,
     "volume": false,

@@ -1,12 +1,14 @@
 {
   "format": "atem-audio-preset",
   "version": 1,
+  "id": "ps_01kzhx3qrgatv2me1s5mzfjd25",
   "name": "Voice safety net",
   "group": "Utility",
   "mic": "Any mic",
   "style": "Safety net",
   "notes": "No tone-shaping at all — the honest flat one. Every EQ band is off. It adds only a gentle gate to close the mic between sentences and a brake limiter to catch peaks before they clip. Copy this onto a channel you have not had time to tune: it will not colour the sound, it just keeps it safe.",
   "author": "Studio Upgrade",
+  "license": "MIT",
   "defaultSections": {
     "gain": false,
     "volume": false,

@@ -1,12 +1,14 @@
 {
   "format": "atem-audio-preset",
   "version": 1,
+  "id": "ps_01kzhx3e007614a8ztakwg2gsh",
   "name": "AM radio",
   "group": "Creative",
   "mic": "Any mic",
   "style": "Effect",
   "notes": "A vintage AM-broadcast voice — a little fuller than the telephone. Band-pass roughly 400 Hz–4.5 kHz, a presence honk around 1.8 kHz, and hard compression for that pumped, level-crushed radio sound. Like the telephone preset, the ATEM supplies the band-limiting and squash but not the analogue crunch. Fun on an announcer channel.",
   "author": "Studio Upgrade",
+  "license": "MIT",
   "defaultSections": {
     "gain": false,
     "volume": false,

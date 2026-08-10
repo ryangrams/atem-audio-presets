@@ -16,6 +16,11 @@ import path from 'node:path'
 const OUT = path.join(import.meta.dirname, '..', 'presets-seed')
 fs.mkdirSync(OUT, { recursive: true })
 
+// Stable community-catalogue ids (ps_<ulid>), minted once and committed. The generator only reads
+// them, so regenerating is idempotent and a preset keeps its identity — and its ratings, hearts and
+// comments — across renames. New presets: add an id here (mint with scripts/mint-id.mjs).
+const SEED_IDS = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, 'seed-ids.json'), 'utf8'))
+
 const rangeOf = (f) => (f < 200 ? 1 : f < 2000 ? 2 : f < 8000 ? 4 : 8)
 const SHAPES = [1, 2, 4, 8, 16, 32]
 const RANGES = [1, 2, 4, 8]
@@ -142,15 +147,20 @@ P.push({
 })
 
 for (const p of P) {
+	const id = SEED_IDS[p.file]
+	if (!id) throw new Error(`No stable id for "${p.file}" in seed-ids.json — mint one first`)
 	const doc = {
 		format: 'atem-audio-preset',
 		version: 1,
+		id,
 		name: p.name,
 		group: p.group,
 		mic: p.mic,
 		style: p.style,
 		notes: p.notes,
 		author: 'Studio Upgrade',
+		// SPDX. Originals default to MIT (the app's licence); a fork must preserve or stay compatible.
+		license: 'MIT',
 		defaultSections: { gain: false, volume: false, pan: false, eq: true, dynamics: true, inputConfig: false },
 		device: { model: 'ATEM Mini Extreme ISO', release: '10.3', build: null },
 		channel: {

@@ -1,12 +1,14 @@
 {
   "format": "atem-audio-preset",
   "version": 1,
+  "id": "ps_01kzhx3ps8j2v2v0zn5tf9d11a",
   "name": "Telephone",
   "group": "Creative",
   "mic": "Any mic",
   "style": "Effect",
   "notes": "The classic phone-line voice: a 300 Hz–3.4 kHz band-pass with a 1 kHz honk. Brutal high-pass and low-pass squeeze everything into the telephone band; the 1 kHz bell adds the nasal \"honk\"; heavy 6:1 comp flattens it. Note: the ATEM cannot add the light distortion a real telephone effect also uses — this is the band-limiting only. Copy it onto a caller/remote-guest channel for a stylised look.",
   "author": "Studio Upgrade",
+  "license": "MIT",
   "defaultSections": {
     "gain": false,
     "volume": false,

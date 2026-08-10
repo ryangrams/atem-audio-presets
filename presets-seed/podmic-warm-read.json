@@ -1,12 +1,14 @@
 {
   "format": "atem-audio-preset",
   "version": 1,
+  "id": "ps_01kzhx3kvg2ve7nqr2wqdbmtcv",
   "name": "PodMic warm read",
   "group": "Broadcast mics",
   "mic": "Rode PodMic",
   "style": "Podcast voice",
   "notes": "Warmer, closer podcast read. 75 Hz high-pass, a touch of 200 Hz reduction so it does not get muddy up close, a modest 4 kHz presence lift and a little 8 kHz air. Comp 3:1 for an even, produced read. Set your own input gain.",
   "author": "Studio Upgrade",
+  "license": "MIT",
   "defaultSections": {
     "gain": false,
     "volume": false,

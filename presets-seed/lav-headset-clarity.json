@@ -1,12 +1,14 @@
 {
   "format": "atem-audio-preset",
   "version": 1,
+  "id": "ps_01kzhx3fygxpxv3t441wqw35eq",
   "name": "Lav / headset clarity",
   "group": "Speech reinforcement",
   "mic": "Lavalier / headset",
   "style": "Lav clarity",
   "notes": "Body-worn lav or headset, which tend to sound dull and chesty. 90 Hz high-pass, a small 500 Hz reduction for the chest resonance, a firmer 5 kHz presence lift to restore the intelligibility a lav loses off-axis, plus a little air. Comp 3:1 to even out the level as the head turns.",
   "author": "Studio Upgrade",
+  "license": "MIT",
   "defaultSections": {
     "gain": false,
     "volume": false,

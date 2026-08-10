@@ -1,12 +1,14 @@
 {
   "format": "atem-audio-preset",
   "version": 1,
+  "id": "ps_01kzhx3mtrdrs59d4bktcr0sa8",
   "name": "SM58 stage vocal",
   "group": "Broadcast mics",
   "mic": "Shure SM58",
   "style": "Live vocal",
   "notes": "Handheld SM58 for a live or run-and-gun vocal. 100 Hz high-pass to hold off handling and proximity boom, a small 400 Hz cut for cupped-mic mud, a presence lift at 4 kHz for cut through a PA. Firmer 4:1 comp for handheld level swings. The 58 rolls off its own top, so no air band.",
   "author": "Studio Upgrade",
+  "license": "MIT",
   "defaultSections": {
     "gain": false,
     "volume": false,
