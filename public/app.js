@@ -1702,7 +1702,9 @@ function openIpMenu(side) {
 	drop.append(scanning)
 
 	for (const ip of recentIps()) addRow('', ip, 'used before', () => pick(ip))
-	if (other && other !== 'sample' && !recentIps().includes(other)) addRow('', other, 'the other column', () => pick(other))
+	// The other column's address — but never the sample-switcher sentinel, which already has its own
+	// row at the top (otherwise "Sample switcher" appears twice).
+	if (other && other !== SAMPLE_IP_TEXT && other !== 'sample' && !recentIps().includes(other)) addRow('', other, 'the other column', () => pick(other))
 	if (!recentIps().includes('192.168.10.240')) addRow('', '192.168.10.240', 'ATEM factory default', () => pick('192.168.10.240'))
 	drop.append(el('div', 'ipdrophelp', 'ATEM Setup lists the address under the switcher’s name.'))
 
