@@ -312,6 +312,19 @@ function shortLabel(label) {
 }
 
 /**
+ * A ≤5-character title for a channel that has no switcher-provided short name (a preset, or the
+ * demo). Keeps the source casing — no uppercasing — and never needs an ellipsis: a trailing number
+ * is preserved ("Camera 1" → "Cam1"), otherwise the first word is clipped ("Lectern" → "Lecte").
+ */
+function deriveShort(label) {
+	const s = String(label ?? '').trim()
+	if (s.length <= 5) return s
+	const m = s.match(/^(.*?)(\d+)\s*$/)
+	if (m) return m[1].replace(/\s+/g, '').slice(0, Math.max(1, 4 - m[2].length)) + m[2]
+	return s.split(/\s+/)[0].slice(0, 5)
+}
+
+/**
  * Render one channel. `d` is an /api/channel payload.
  *
  * opts.sections  which sections are part of the copy
@@ -358,7 +371,10 @@ function renderStripCard(box, d, opts = {}) {
 		${
 			opts.title
 				? `<div class="strip-name multi" title="${opts.title.label}">${opts.title.label}<span class="subname">${opts.title.sub}</span></div>`
-				: `<div class="strip-name" title="${d.meta.label}">${shortLabel(d.meta.label)}</div>`
+				: // The switcher's own short name (≤4 chars, its own casing) — it always fits, so no
+					// uppercasing and no ellipsis. When none was captured (a preset, or the demo), derive
+					// an equally short one rather than ellipsising the full label.
+					`<div class="strip-name" title="${d.meta.label}">${d.meta.shortName || deriveShort(d.meta.label)}</div>`
 		}
 		<div class="ctrl block${cls('gain')}" data-sec="gain"${a11y('gain', 'Gain')}>
 			<b>Gain</b>

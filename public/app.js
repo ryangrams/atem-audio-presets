@@ -365,12 +365,12 @@ async function connectSide(side) {
 		if (tourDemo) endTourForConnect()
 		s.channels = []
 		s.detail = null
-		s.error = { ip: s.ip, message: e.message }
+		s.error = null
 		dev.innerHTML = '<span class="err">●</span> Not connected'
 		renderChannels(side)
 		renderDetail(side)
 		log(`Connect failed for ${esc(s.ip)}: ${esc(e.message)}`, 'err')
-		setStatus(`Could not reach ${s.ip}`, 'err')
+		notifyConnectFailure(s.ip, e.message, () => connectSide(side))
 	} finally {
 		connectInFlight = false
 	}
@@ -472,11 +472,12 @@ async function connectSingle() {
 			const s = state[side]
 			s.channels = []
 			s.detail = null
-			s.error = { ip, message: e.message }
+			s.error = null
 			if (!isLib(side)) renderSideAll(side)
 		}
 		log(`Connect failed for ${esc(ip)}: ${esc(e.message)}`, 'err')
-		setStatus(`Could not reach ${ip}`, 'err')
+		// One notification for the whole attempt, not one per column.
+		notifyConnectFailure(ip, e.message, () => connectSingle())
 	} finally {
 		connectInFlight = false
 	}
@@ -1020,11 +1021,10 @@ function updateActionUI() {
  * window; the hidden status element stays for assistive technology and for clearing.
  */
 function setStatus(text, cls) {
+	// #status is an invisible aria-live region now — its only job is to announce to screen readers.
+	// Everything visible goes to the top-right notification stack; nothing ever appears "below".
 	const box = $('#status')
-	if (box) {
-		box.className = `status${cls ? ' ' + cls : ''}`
-		box.textContent = text
-	}
+	if (box) box.textContent = text || ''
 	if (text && (cls === 'warn' || cls === 'err')) notify(cls, text)
 }
 
@@ -1954,7 +1954,8 @@ function renderCardHint(side) {
 // ------------------------------------------------------------------ empty and error states
 
 function renderEmptyCard(side, box) {
-	if (state[side].error) return renderConnectError(side, box)
+	// A connect failure is a top-right notification now, not an in-card guide — so nothing special
+	// here; the card just falls through to its normal "nothing selected / connect" prompt.
 	if (!isLib(side) && !state[side].channels.length) {
 		// Connected but nothing listed happens when this column was the library at connect time.
 		if (state[side].device) {
@@ -2515,6 +2516,16 @@ function connectDiagnosis(ip, message) {
 	return { title: `Nothing answered at ${ip}`, causes: [busy, power, net, typo] }
 }
 
+/**
+ * A failed connect surfaces in exactly one place: a sticky notification in the top-right stack,
+ * carrying the diagnosis and a Retry. Never in a card, never twice, never "below". The full
+ * troubleshooting list lives in Help → When it goes wrong.
+ */
+function notifyConnectFailure(ip, message, retry) {
+	const d = connectDiagnosis(ip, message)
+	notify('err', d.title, d.causes[0]?.fix, { sticky: true, retry, retryLabel: `Try ${esc(ip)} again` })
+}
+
 function renderConnectError(side, box) {
 	const { ip, message } = state[side].error
 	const d = connectDiagnosis(ip, message)
@@ -2666,14 +2677,37 @@ const TOAST_LIFE = { ok: 8000, warn: 11000, err: 0 }
 function notify(kind, headline, detail, opts = {}) {
 	const stack = $('#toasts')
 	if (!stack) return
+
+	// Group identical messages the way macOS does: a repeat bumps a count on the existing card
+	// rather than stacking a second copy — no more "Could not reach X" twice.
+	const key = `${kind} ${headline} ${detail ?? ''}`
+	const twin = [...stack.querySelectorAll('.toast')].find((c) => c.dataset.key === key && !c.classList.contains('out'))
+	if (twin) {
+		twin.__bump()
+		return twin
+	}
+
 	const card = el('div', `toast ${kind}`)
+	card.dataset.key = key
 	card.append(el('span', 'odot'))
 	const words = el('div', 'owords')
-	words.append(el('div', 'ohead', headline))
+	const head = el('div', 'ohead')
+	head.append(document.createTextNode(headline))
+	const badge = el('span', 'ocount')
+	head.append(badge)
+	words.append(head)
 	if (detail) words.append(el('div', 'odetail', detail))
 	card.append(words)
 
 	const acts = el('div', 'oacts')
+	if (opts.retry) {
+		const b = el('button', null, opts.retryLabel || 'Try again')
+		b.onclick = () => {
+			close()
+			opts.retry()
+		}
+		acts.append(b)
+	}
 	if (opts.undo) {
 		const b = el('button', null, 'Undo')
 		b.onclick = () => {
@@ -2709,21 +2743,36 @@ function notify(kind, headline, detail, opts = {}) {
 	const close = () => {
 		clearTimeout(timer)
 		card.classList.add('out')
-		setTimeout(() => card.remove(), 160)
+		setTimeout(() => {
+			card.remove()
+			syncClearAll()
+		}, 160)
 	}
 	x.onclick = close
 
-	// A sticky toast (an error, or one carrying an Undo) never expires on its own — so it must not be
-	// silently evicted by four quick successes either. Mark it, so trimming can skip it.
-	const life = opts.sticky || opts.undo ? 0 : (TOAST_LIFE[kind] ?? 8000)
+	// A sticky toast (an error, a retry offer, or one carrying an Undo) never expires on its own — so
+	// it must not be silently evicted by a burst of successes either. Mark it, so trimming skips it.
+	const life = opts.sticky || opts.undo || opts.retry ? 0 : (TOAST_LIFE[kind] ?? 8000)
 	if (!life) card.dataset.sticky = '1'
+
+	// A grouped repeat: raise the count, un-expire, restart the clock.
+	let count = 1
+	card.__bump = () => {
+		badge.textContent = String(++count)
+		badge.classList.add('on')
+		card.classList.remove('out')
+		if (life) {
+			clearTimeout(timer)
+			timer = setTimeout(close, life)
+		}
+	}
 
 	// Newest at the top, and never more than a screenful — but keep the sticky ones and drop the
 	// oldest auto-dismissing toast instead. If every toast is sticky, keep them all rather than lose
 	// an unread error.
 	stack.prepend(card)
-	while (stack.children.length > 4) {
-		const victims = [...stack.children].filter((c) => c !== card && !c.dataset.sticky)
+	while (stack.querySelectorAll('.toast').length > 5) {
+		const victims = [...stack.querySelectorAll('.toast')].filter((c) => c !== card && !c.dataset.sticky)
 		if (!victims.length) break
 		victims[victims.length - 1].remove()
 	}
@@ -2737,7 +2786,28 @@ function notify(kind, headline, detail, opts = {}) {
 			timer = setTimeout(close, 2500)
 		}
 	}
+	syncClearAll()
 	return card
+}
+
+/** A "Clear all" control sits over the stack once more than one message is showing, as on macOS. */
+function syncClearAll() {
+	const stack = $('#toasts')
+	if (!stack) return
+	const n = stack.querySelectorAll('.toast').length
+	let bar = stack.querySelector('.toasts-clear')
+	if (n > 1 && !bar) {
+		bar = el('button', 'toasts-clear', 'Clear all')
+		bar.onclick = () => {
+			for (const c of stack.querySelectorAll('.toast')) c.remove()
+			syncClearAll()
+		}
+		stack.prepend(bar)
+	} else if (n <= 1 && bar) {
+		bar.remove()
+	} else if (bar) {
+		stack.prepend(bar) // keep it above the newest toast
+	}
 }
 
 /** Kept for every existing caller — an outcome is just a notification with actions. */
