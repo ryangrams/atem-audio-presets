@@ -20,10 +20,10 @@ const PORT = Number(process.env.PORT ?? 8730)
 
 // The public catalogue repo (where "Share a preset" opens a pull request) and the Turnstile site
 // key (public — it must match the widget the catalogue's comment endpoint verifies against). Both
-// overridable for local testing; the defaults are what a released build ships with. The site key
-// below is Cloudflare's always-passes TEST key until the real widget is provisioned.
+// overridable for local testing; the defaults are what a released build ships with. Point
+// ATEM_TURNSTILE_SITEKEY at Cloudflare's test key (1x00000000000000000000AA) for local work.
 const LIBRARY_REPO = process.env.ATEM_LIBRARY_REPO || 'ryangrams/atem-preset-library'
-const TURNSTILE_SITEKEY = process.env.ATEM_TURNSTILE_SITEKEY || '1x00000000000000000000AA'
+const TURNSTILE_SITEKEY = process.env.ATEM_TURNSTILE_SITEKEY || '0x4AAAAAAEMJ4iYr3sIR27TY'
 
 /**
  * Where presets and pre-write backups live.
