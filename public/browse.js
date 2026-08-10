@@ -27,13 +27,67 @@ const CAT = {
 	busy: false,
 	installed: new Set(JSON.parse(localStorage.getItem('atem-audio-presets.installed') ?? '[]')),
 	publish: null,
+	config: null,
+	replyTo: null,
 }
 
 const SORTS = [
 	['top', 'Top rated'],
 	['installs', 'Most used'],
+	['rating', 'Highest rated'],
 	['new', 'Newest'],
 ]
+
+/** Server config (catalogue repo for pull requests, Turnstile site key). Fetched once, then cached. */
+async function ensureConfig() {
+	if (CAT.config) return CAT.config
+	try {
+		CAT.config = await api('/api/status')
+	} catch {
+		CAT.config = {}
+	}
+	return CAT.config
+}
+
+// A preset's stable community id, minted client-side for a fork: ps_ + ULID (48-bit ms + 80-bit
+// random, Crockford base32, lowercased). Matches the server's lib/id.js exactly.
+function mintPresetId() {
+	const CB32 = '0123456789abcdefghjkmnpqrstvwxyz'
+	const enc = (num, len) => {
+		let s = ''
+		for (let i = len - 1; i >= 0; i--) {
+			s = CB32[Number(num % 32n)] + s
+			num /= 32n
+		}
+		return s
+	}
+	const rnd = crypto.getRandomValues(new Uint8Array(10))
+	let r = 0n
+	for (const b of rnd) r = (r << 8n) | BigInt(b)
+	return 'ps_' + enc(BigInt(Date.now()), 10) + enc(r, 16)
+}
+
+const slugify = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'preset'
+
+// ---- Turnstile (only loaded when the comment composer appears) --------------------------------
+let turnstileReady = null
+function loadTurnstile() {
+	if (window.turnstile) return Promise.resolve(window.turnstile)
+	if (turnstileReady) return turnstileReady
+	turnstileReady = new Promise((resolve, reject) => {
+		const s = document.createElement('script')
+		s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
+		s.async = true
+		s.defer = true
+		s.onload = () => resolve(window.turnstile)
+		s.onerror = () => {
+			turnstileReady = null
+			reject(new Error('Could not load the human-check'))
+		}
+		document.head.append(s)
+	})
+	return turnstileReady
+}
 
 const timeAgo = (iso) => {
 	const d = (Date.now() - new Date(iso).getTime()) / 1000
@@ -73,6 +127,7 @@ function openBrowser() {
 	if (CAT.open) return
 	CAT.open = true
 	document.body.classList.add('browsing')
+	ensureConfig()
 	renderBrowser()
 	loadCatalogue()
 	document.addEventListener('keydown', browserKeys)
@@ -84,6 +139,7 @@ function closeBrowser() {
 	CAT.sel = null
 	CAT.detail = null
 	CAT.publish = null
+	CAT.replyTo = null
 	document.body.classList.remove('browsing')
 	$('#browse').textContent = ''
 	$('#browse').hidden = true
@@ -123,6 +179,7 @@ async function openPreset(id) {
 	CAT.sel = id
 	CAT.detail = null
 	CAT.publish = null
+	CAT.replyTo = null
 	renderBrowser()
 	try {
 		CAT.detail = await api(`/api/community/presets/${encodeURIComponent(id)}`)
@@ -284,6 +341,7 @@ function catCard(p) {
 	art.innerHTML = eqSparkline(p.eq ?? p.channel?.eq, 300, 84)
 	if (p.style) art.append(el('span', 'catchip', p.style))
 	card.append(art)
+	if (p.variantOf) art.append(el('span', 'catforkflag', 'Variant'))
 	const words = el('div', 'catwords')
 	words.append(el('b', 'catname', p.name))
 	words.append(el('div', 'catmic', p.mic ?? 'Any mic'))
@@ -291,9 +349,13 @@ function catCard(p) {
 	const rate = el('span', 'catrate')
 	rate.innerHTML = stars(p.rating, p.ratings)
 	foot.append(rate)
+	if (p.hearts) foot.append(el('span', 'catheartn', `♥ ${p.hearts}`))
 	foot.append(el('span', 'catinstalls', `${p.installs ?? 0} used`))
 	words.append(foot)
-	if (CAT.installed.has(p.id)) words.append(el('span', 'catowned', 'In your library'))
+	const tags = el('div', 'cattags')
+	if (p.variantCount) tags.append(el('span', 'catvariants', `${p.variantCount} variant${p.variantCount === 1 ? '' : 's'}`))
+	if (CAT.installed.has(p.id)) tags.append(el('span', 'catowned', 'In your library'))
+	if (tags.children.length) words.append(tags)
 	card.append(words)
 	return card
 }
@@ -328,6 +390,10 @@ function catDetail() {
 		`${p.mic ? `<span>${esc(p.mic)}</span>` : ''}${p.style ? `<span class="hstyle">${esc(p.style)}</span>` : ''}` +
 		`<span>by ${esc(p.author ?? 'anonymous')}</span>${p.createdAt ? `<span>${esc(timeAgo(p.createdAt))}</span>` : ''}`
 	words.append(meta)
+
+	// A fork wears its lineage plainly: the original, who changed it, what changed, the licence.
+	if (p.variantOf) words.append(catAttribution(p))
+
 	const rate = el('div', 'herorate')
 	rate.innerHTML = `${stars(p.rating, p.ratings, 13)}<span class="hinstalls">${p.installs ?? 0} people use this</span>`
 	words.append(rate)
@@ -341,6 +407,22 @@ function catDetail() {
 	add.disabled = CAT.busy
 	add.onclick = () => installPreset(p)
 	acts.append(add)
+
+	// Favorite — affinity, deliberately separate from the star rating (quality): its own toggle, its
+	// own copy, so a heart never reads as a verdict on how good the chain is.
+	const heart = el('button', `heroheart${p.youHearted ? ' on' : ''}`)
+	heart.setAttribute('aria-pressed', p.youHearted ? 'true' : 'false')
+	heart.setAttribute('aria-label', p.youHearted ? 'Remove from favourites' : 'Save to favourites')
+	heart.innerHTML = `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M8 14S2 10 2 5.6A3.1 3.1 0 0 1 8 4a3.1 3.1 0 0 1 6 1.6C14 10 8 14 8 14z"/></svg><span>${p.hearts ?? 0}</span>`
+	heart.onclick = () => sendHeart(p)
+	acts.append(heart)
+
+	// Make a variant — start your own version, credited to this one, shared as a pull request.
+	const fork = el('button', 'herofork', 'Make a variant')
+	fork.title = 'Start your own version, credited to this preset'
+	fork.onclick = () => startVariant(p)
+	acts.append(fork)
+
 	if (p.sampleUrl) {
 		const a = el('a', 'herosample', 'Hear it')
 		a.href = p.sampleUrl
@@ -361,8 +443,38 @@ function catDetail() {
 	wrap.append(card)
 
 	wrap.append(catRate(p))
+	if (p.variants?.length) wrap.append(catVariants(p))
 	wrap.append(catComments(p))
 	return wrap
+}
+
+/** The lineage block on a fork: what it came from, who made it, what changed, under what licence. */
+function catAttribution(p) {
+	const box = el('div', 'heroattr')
+	const orig = p.originalAuthor?.name || p.originalAuthor?.handle || (typeof p.originalAuthor === 'string' ? p.originalAuthor : null) || p.parent?.author || 'the original author'
+	const line = el('div', 'attrline')
+	line.append(el('span', 'attrlead', 'Variant of '))
+	const link = el('button', 'attrparent', p.parent ? p.parent.name : 'the original')
+	if (p.parent) link.onclick = () => openPreset(p.parent.id)
+	else link.disabled = true
+	line.append(link)
+	line.append(el('span', 'attrby', ` by ${orig}`))
+	box.append(line)
+	if (p.author) box.append(el('div', 'attrmod', `Modified by ${p.author}`))
+	if (p.changeNote) box.append(el('p', 'attrnote', p.changeNote))
+	box.append(el('span', 'attrlic', `${p.license || 'MIT'} · free to use and re-share`))
+	return box
+}
+
+/** The Variants section — the forks people tagged onto this preset, each its own rateable preset. */
+function catVariants(p) {
+	const box = el('div', 'catvarbox')
+	box.append(el('div', 'catsec', `Variants · ${p.variants.length}`))
+	box.append(el('p', 'catvarintro', 'Tweaks other people made to this one. Each is its own preset — open it to see what changed, rate it, or add it to your library.'))
+	const grid = el('div', 'catgrid')
+	for (const v of p.variants) grid.append(catCard(v))
+	box.append(grid)
+	return box
 }
 
 function catRate(p) {
@@ -384,40 +496,101 @@ function catRate(p) {
 function catComments(p) {
 	const box = el('div', 'catcomments')
 	const list = p.comments ?? []
-	box.append(el('div', 'catsec', list.length ? `${list.length} note${list.length === 1 ? '' : 's'} from people who used it` : 'No notes yet'))
+	const total = list.reduce((n, c) => n + 1 + (c.replies?.length || 0), 0)
+	box.append(el('div', 'catsec', total ? `${total} note${total === 1 ? '' : 's'} from people who used it` : 'No notes yet — be the first'))
 
-	const form = el('div', 'commentform')
+	box.append(commentComposer(p, { parentId: null, placeholder: 'What worked, what you changed, what mic and room — the useful kind of comment', withRating: true }))
+	for (const c of list) box.append(renderComment(p, c, false))
+	return box
+}
+
+/** The comment box. A top-level one can double as a review (optional star). Replies cannot. */
+function commentComposer(p, { parentId, placeholder, withRating }) {
+	const form = el('div', parentId ? 'commentform reply' : 'commentform')
 	const input = el('textarea', 'commentbox')
 	input.rows = 2
-	input.placeholder = 'What worked, what you changed, what mic and room — the useful kind of comment'
-	input.setAttribute('aria-label', 'Add a note')
+	input.placeholder = placeholder
+	input.setAttribute('aria-label', parentId ? 'Write a reply' : 'Add a note')
 	form.append(input)
-	const send = el('button', null, 'Post')
-	send.onclick = () => sendComment(p, input)
-	form.append(send)
-	box.append(form)
 
-	for (const c of list) {
-		const row = el('div', 'comment')
-		const head = el('div', 'chead')
-		head.append(el('b', null, c.author ?? 'anonymous'))
-		if (c.rating) {
-			const s = el('span', 'crate')
-			s.innerHTML = stars(c.rating, undefined, 9)
-			head.append(s)
+	// A review-rating that lives entirely in the DOM (no re-render) so the draft text is never lost.
+	let rating = 0
+	if (withRating) {
+		const rrow = el('div', 'reviewstars')
+		rrow.append(el('span', 'reviewlab', 'Rate it too?'))
+		for (let i = 1; i <= 5; i++) {
+			const b = el('button', 'reviewstar')
+			b.type = 'button'
+			b.setAttribute('aria-label', `${i} star${i === 1 ? '' : 's'}`)
+			b.innerHTML = '<svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true"><path d="M8 1.2l2.1 4.3 4.7.7-3.4 3.3.8 4.7L8 11.9 3.8 14.2l.8-4.7L1.2 6.2l4.7-.7z"/></svg>'
+			b.onclick = () => {
+				rating = rating === i ? 0 : i
+				;[...rrow.querySelectorAll('.reviewstar')].forEach((s, j) => s.classList.toggle('on', j < rating))
+			}
+			rrow.append(b)
 		}
-		head.append(el('span', 'cwhen', timeAgo(c.at)))
-		row.append(head)
-		row.append(el('p', 'cbody', c.body))
-		const up = el('button', 'cup', `Helpful · ${c.votes ?? 0}`)
-		up.onclick = () => {
-			c.votes = (c.votes ?? 0) + 1
+		form.append(rrow)
+	}
+
+	const actions = el('div', 'commentactions')
+	const send = el('button', 'primary', parentId ? 'Reply' : 'Post')
+	send.onclick = async () => {
+		const text = input.value.trim()
+		if (!text) return input.focus()
+		send.disabled = true
+		send.textContent = 'Verifying…'
+		await postComment(p, { text, rating: withRating ? rating || null : null, parentId })
+	}
+	actions.append(send)
+	if (parentId) {
+		const cancel = el('button', 'ghost', 'Cancel')
+		cancel.onclick = () => {
+			CAT.replyTo = null
 			renderBrowser()
 		}
-		row.append(up)
-		box.append(row)
+		actions.append(cancel)
 	}
-	return box
+	form.append(actions)
+	form.append(el('span', 'commenthint', 'A quick human check runs when you post. Comments are public — be kind and useful.'))
+	return form
+}
+
+/** One comment, depth-1: top-level rows carry their replies; a reply renders flat with a "to @name". */
+function renderComment(p, c, isReply) {
+	const row = el('div', isReply ? 'comment reply' : 'comment')
+	const head = el('div', 'chead')
+	head.append(el('b', 'cauthor', c.author ?? 'anonymous'))
+	if (c.replyToName) head.append(el('span', 'creplyto', `to ${c.replyToName}`))
+	if (c.rating) {
+		const s = el('span', 'crate')
+		s.innerHTML = stars(c.rating, undefined, 9)
+		head.append(s)
+	}
+	head.append(el('span', 'cwhen', timeAgo(c.at)))
+	row.append(head)
+	row.append(el('p', 'cbody', c.body))
+
+	const bar = el('div', 'cbar')
+	const up = el('button', `cup${c.youHelpful ? ' on' : ''}`, `Helpful${c.helpful ? ` · ${c.helpful}` : ''}`)
+	up.onclick = () => toggleHelpful(p, c)
+	bar.append(up)
+	if (!isReply) {
+		const rep = el('button', 'creply', 'Reply')
+		rep.onclick = () => {
+			CAT.replyTo = CAT.replyTo === c.id ? null : c.id
+			renderBrowser()
+		}
+		bar.append(rep)
+	}
+	row.append(bar)
+
+	if (!isReply && c.replies?.length) {
+		const kids = el('div', 'creplies')
+		for (const r of c.replies) kids.append(renderComment(p, r, true))
+		row.append(kids)
+	}
+	if (!isReply && CAT.replyTo === c.id) row.append(commentComposer(p, { parentId: c.id, placeholder: `Reply to ${c.author ?? 'anonymous'}…`, withRating: false }))
+	return row
 }
 
 async function installPreset(p) {
@@ -439,12 +612,20 @@ async function installPreset(p) {
 					mic: p.mic ?? null,
 					style: p.style ?? null,
 					notes: p.notes ?? null,
+					license: p.license ?? 'MIT',
 					sampleUrl: p.sampleUrl ?? null,
 				},
 			}),
 		})
 		CAT.installed.add(p.id)
 		localStorage.setItem('atem-audio-presets.installed', JSON.stringify([...CAT.installed]))
+		// Count the adoption on the catalogue (one per person, best-effort — never blocks the add).
+		api(`/api/community/presets/${encodeURIComponent(p.id)}/install`, { method: 'POST', body: '{}' })
+			.then((r) => {
+				p.installs = r.installs
+				renderBrowser()
+			})
+			.catch(() => {})
 		await loadPresets()
 		setStatus(`Added “${p.name}” to your library`, 'ok')
 		showOutcome('ok', `“${p.name}” is in your library`, `Filed under ${esc(p.style || 'Community')}. Flip a column to Presets to use it.`)
@@ -467,24 +648,158 @@ async function sendRating(p, rating) {
 	renderBrowser()
 }
 
-async function sendComment(p, input) {
-	const text = input.value.trim()
-	if (!text) return input.focus()
-	input.value = ''
+async function sendHeart(p) {
+	const prev = p.youHearted
+	const prevN = p.hearts ?? 0
+	p.youHearted = !prev // optimistic
+	p.hearts = prevN + (prev ? -1 : 1)
+	renderBrowser()
 	try {
-		const body = await api(`/api/community/presets/${encodeURIComponent(p.id)}/comments`, { method: 'POST', body: JSON.stringify({ body: text, rating: p.yourRating ?? null }) })
+		const body = await api(`/api/community/presets/${encodeURIComponent(p.id)}/heart`, { method: 'POST', body: '{}' })
+		p.hearts = body.hearts
+		p.youHearted = body.youHearted
+	} catch {
+		p.youHearted = prev
+		p.hearts = prevN
+	}
+	renderBrowser()
+}
+
+// ------------------------------------------------------------------ forks / pull-request publish
+
+/**
+ * Build the GitHub "new file → pull request" deep link that carries a one-preset pack. No server
+ * secret: the user is signed in to GitHub already, and GitHub auto-forks the repo if they lack write
+ * access. The pack file is a few KB, well under the practical URL limit.
+ */
+function buildPrUrl(repo, preset, { title, body }) {
+	const pack = {
+		format: 'atem-audio-preset-pack',
+		version: 1,
+		name: preset.name,
+		author: preset.author || '',
+		createdAt: new Date().toISOString(),
+		presets: [preset],
+	}
+	const filename = `packs/${slugify(preset.name)}--${preset.id.slice(-8)}.json`
+	const value = JSON.stringify(pack, null, 2)
+	const qs = new URLSearchParams({ filename, value, message: title })
+	if (body) qs.set('description', body)
+	return `https://github.com/${repo}/new/main?${qs.toString()}`
+}
+
+/** Assemble the variant preset from a parent and hand off to the shared publish form in fork mode. */
+async function startVariant(parent) {
+	await ensureConfig()
+	CAT.publish = {
+		mode: 'variant',
+		parent,
+		sending: false,
+		edits: {
+			name: `${parent.name} (variant)`,
+			mic: parent.mic ?? '',
+			style: parent.style ?? '',
+			notes: parent.notes ?? '',
+			changeNote: '',
+			sampleUrl: '',
+			author: localStorage.getItem('atem-audio-presets.author') ?? '',
+		},
+	}
+	CAT.sel = null
+	CAT.detail = null
+	renderBrowser()
+}
+
+async function postComment(p, { text, rating, parentId }) {
+	const cfg = await ensureConfig()
+	let token
+	try {
+		token = await getTurnstileToken(cfg.turnstileSiteKey)
+	} catch {
+		setStatus('Could not verify you are human. Please try again.', 'err')
+		renderBrowser()
+		return
+	}
+	try {
+		const author = (localStorage.getItem('atem-audio-presets.author') || '').trim() || null
+		const body = await api(`/api/community/presets/${encodeURIComponent(p.id)}/comments`, {
+			method: 'POST',
+			body: JSON.stringify({ body: text, rating: rating ?? null, parentId: parentId ?? null, author, turnstileToken: token }),
+		})
 		p.comments = body.comments
+		if (rating) p.yourRating = rating
+		CAT.replyTo = null
 	} catch (e) {
 		setStatus(e.message, 'err')
 	}
 	renderBrowser()
 }
 
+async function toggleHelpful(p, c) {
+	const prev = c.youHelpful
+	const prevN = c.helpful ?? 0
+	c.youHelpful = !prev
+	c.helpful = prevN + (prev ? -1 : 1)
+	renderBrowser()
+	try {
+		const body = await api(`/api/community/comments/${encodeURIComponent(c.id)}/helpful`, { method: 'POST', body: '{}' })
+		c.helpful = body.helpful
+		c.youHelpful = body.youHelpful
+	} catch {
+		c.youHelpful = prev
+		c.helpful = prevN
+	}
+	renderBrowser()
+}
+
+/**
+ * Get one Turnstile token on demand: mount an invisible widget offscreen, execute it, resolve with
+ * the token (or reject). Cloudflare shows its own centred modal if a challenge is actually needed.
+ */
+async function getTurnstileToken(siteKey) {
+	if (!siteKey) throw new Error('No human-check configured')
+	await loadTurnstile()
+	return new Promise((resolve, reject) => {
+		const holder = document.createElement('div')
+		holder.style.position = 'fixed'
+		holder.style.left = '-9999px'
+		holder.style.top = '0'
+		document.body.append(holder)
+		let done = false
+		const finish = (fn, val) => {
+			if (done) return
+			done = true
+			try {
+				window.turnstile.remove(id)
+			} catch {
+				/* already gone */
+			}
+			holder.remove()
+			fn(val)
+		}
+		// Invisibility comes from the widget's own mode (set when the widget is created), not a render
+		// param. A managed widget auto-solves and calls back; an invisible one needs execute(); either
+		// way Cloudflare shows its own centred modal if a real challenge is required.
+		const id = window.turnstile.render(holder, {
+			sitekey: siteKey,
+			callback: (t) => finish(resolve, t),
+			'error-callback': () => finish(reject, new Error('turnstile-error')),
+			'timeout-callback': () => finish(reject, new Error('turnstile-timeout')),
+		})
+		try {
+			window.turnstile.execute(id)
+		} catch {
+			/* execute only applies to invisible-mode widgets; a no-op otherwise */
+		}
+		setTimeout(() => finish(reject, new Error('turnstile-timeout')), 15000)
+	})
+}
+
 // ------------------------------------------------------------------ publish
 
 function startPublish() {
 	const local = state.library.presets.filter((p) => p.format !== 'atem-audio-snapshot')
-	CAT.publish = { file: local[0]?.file ?? null, sending: false, edits: null }
+	CAT.publish = { mode: 'share', file: local[0]?.file ?? null, sending: false, edits: null }
 	loadPublishEdits(local[0])
 	renderBrowser()
 }
@@ -502,42 +817,50 @@ function loadPublishEdits(p) {
 }
 
 const okSampleUrl = (v) => !v || /^https?:\/\/\S+\.\S+/i.test(v)
+const PRESET_ID_RE = /^ps_[0-9a-z]{26}$/
 
 function catPublish() {
+	const isVariant = CAT.publish.mode === 'variant'
 	const wrap = el('div', 'catbody publish')
-	const local = state.library.presets.filter((p) => p.format !== 'atem-audio-snapshot')
-	wrap.append(el('div', 'catsec', 'Share a preset'))
+	wrap.append(el('div', 'catsec', isVariant ? `Make a variant of “${CAT.publish.parent.name}”` : 'Share a preset'))
 
-	if (!local.length) {
-		const none = el('div', 'catempty')
-		none.innerHTML =
-			'<b>Save one first</b>' +
-			'<p>Sharing starts from your own library: dial a channel in, flip a column to Presets, and save it. Then it can be shared from here.</p>'
-		wrap.append(none)
-		return wrap
-	}
-
-	const pick = el('div', 'pubpick')
-	for (const p of local) {
-		const b = el('button', `pubrow${CAT.publish.file === p.file ? ' on' : ''}`)
-		const spark = el('span', 'pspark')
-		b.append(spark)
-		paintSpark(p.file, spark)
-		const w = el('div', 'pwords')
-		w.append(el('span', 'name', p.name))
-		const bits = [p.mic, p.style].filter(Boolean).join(' · ')
-		w.append(el('span', 'pmeta2', bits || 'No mic or style set'))
-		b.append(w)
-		b.onclick = () => {
-			CAT.publish.file = p.file
-			loadPublishEdits(p)
-			renderBrowser()
+	let chosen = null
+	if (isVariant) {
+		const info = el('p', 'pubvarinfo')
+		info.textContent = `Your version starts from the original’s settings, credits ${CAT.publish.parent.author || 'the original author'}, and is opened as a pull request on GitHub. Tweak the details, say what you changed, then open the request.`
+		wrap.append(info)
+	} else {
+		const local = state.library.presets.filter((p) => p.format !== 'atem-audio-snapshot')
+		if (!local.length) {
+			const none = el('div', 'catempty')
+			none.innerHTML =
+				'<b>Save one first</b>' +
+				'<p>Sharing starts from your own library: dial a channel in, flip a column to Presets, and save it. Then it can be shared from here.</p>'
+			wrap.append(none)
+			return wrap
 		}
-		pick.append(b)
+		const pick = el('div', 'pubpick')
+		for (const p of local) {
+			const b = el('button', `pubrow${CAT.publish.file === p.file ? ' on' : ''}`)
+			const spark = el('span', 'pspark')
+			b.append(spark)
+			paintSpark(p.file, spark)
+			const w = el('div', 'pwords')
+			w.append(el('span', 'name', p.name))
+			const bits = [p.mic, p.style].filter(Boolean).join(' · ')
+			w.append(el('span', 'pmeta2', bits || 'No mic or style set'))
+			b.append(w)
+			b.onclick = () => {
+				CAT.publish.file = p.file
+				loadPublishEdits(p)
+				renderBrowser()
+			}
+			pick.append(b)
+		}
+		wrap.append(pick)
+		chosen = local.find((p) => p.file === CAT.publish.file)
 	}
-	wrap.append(pick)
 
-	const chosen = local.find((p) => p.file === CAT.publish.file)
 	const e = CAT.publish.edits ?? {}
 
 	// Everything that will be public, editable here. A preset saved in a hurry usually has a name
@@ -554,70 +877,109 @@ function catPublish() {
 		if (long) input.rows = 3
 		input.oninput = () => {
 			CAT.publish.edits[key] = input.value
-			// Live, because the Publish button's enabled state depends on mic and style.
-			refreshPublishState()
+			refreshPublishState() // live, because the button's enabled state depends on the fields
 		}
 		row.append(input)
 		if (hint) row.append(el('span', 'pubhint', hint))
 		form.append(row)
 		return input
 	}
+	if (isVariant) field('name', 'Variant name', `${CAT.publish.parent.name} (variant)`, 'What to call your version.')
 	field('mic', 'Microphone or source', 'Shure SM7B, lectern gooseneck, Rode PodMic…', 'Required — this is how people find it.')
 	field('style', 'Style', 'Podcast, Broadcast voice, Live vocal…', 'Required.')
+	if (isVariant) field('changeNote', 'What did you change?', 'Opened the low-pass, eased the 1 kHz honk…', 'Required — the whole point of a variant.', true)
 	field('notes', 'Notes', 'What it suits, what to tweak by ear, what it assumes about the room.', 'The most useful part for the next person.', true)
 	const sample = field('sampleUrl', 'Link to a sample', 'https://…', 'Optional. A short clip of this chain in use is worth more than any description.')
-	field('author', 'Your name or handle', 'Optional — published as “shared by”', 'Leave blank to publish anonymously.')
+	field('author', 'Your name or handle', 'Optional — credited as “shared by”', 'Leave blank to share anonymously.')
 	wrap.append(form)
 
 	const note = el('div', 'pubnote')
 	wrap.append(note)
-
-	const go = el('button', 'primary big', 'Publish to the community')
+	const go = el('button', 'primary big', 'Open a pull request')
 	wrap.append(go)
 
 	function refreshPublishState() {
 		const d = CAT.publish.edits
-		const missing = !d.mic?.trim() || !d.style?.trim()
+		const missing = !d.mic?.trim() || !d.style?.trim() || (isVariant && !d.changeNote?.trim())
 		const badUrl = !okSampleUrl(d.sampleUrl?.trim())
 		sample.classList.toggle('bad', badUrl)
 		note.innerHTML = missing
-			? '<b>Add a mic and a style.</b> Everything else is optional, but those two are how anyone finds this preset.'
+			? `<b>Add a mic and a style${isVariant ? ', and say what you changed' : ''}.</b> Those are how anyone finds and trusts this preset.`
 			: badUrl
 				? '<b>That sample link does not look like a URL.</b> It should start with http:// or https://.'
-				: '<b>Ready to share.</b> The settings, the words above and your name go up. Nothing about your switcher or network travels except the model and firmware build.'
-		go.disabled = missing || badUrl || CAT.publish.sending
-		go.textContent = CAT.publish.sending ? 'Publishing…' : 'Publish to the community'
+				: '<b>Ready.</b> This opens a pre-filled pull request on GitHub — review it there and submit. It goes live once it’s merged. Nothing about your switcher or network travels except the model and firmware build.'
+		go.disabled = missing || badUrl
 	}
 	refreshPublishState()
 
 	go.onclick = async () => {
 		const d = CAT.publish.edits
-		CAT.publish.sending = true
-		refreshPublishState()
+		const cfg = await ensureConfig()
+		const repo = cfg.libraryRepo || 'ryangrams/atem-preset-library'
+		localStorage.setItem('atem-audio-presets.author', (d.author || '').trim())
+		let preset
+		let title
+		let prBody
 		try {
-			const body = await api(`/api/presets/${encodeURIComponent(chosen.file)}`)
-			localStorage.setItem('atem-audio-presets.author', d.author.trim())
-			await api('/api/community/presets', {
-				method: 'POST',
-				body: JSON.stringify({
+			if (isVariant) {
+				const parent = CAT.publish.parent
+				preset = {
+					format: 'atem-audio-preset',
+					version: 1,
+					id: mintPresetId(),
+					name: (d.name || '').trim() || `${parent.name} (variant)`,
+					mic: d.mic.trim(),
+					style: d.style.trim(),
+					notes: d.notes.trim() || null,
 					author: d.author.trim() || null,
-					// The shared copy carries the words typed here, not whatever the local file happens
-					// to hold — the two are allowed to differ.
-					preset: { ...body, mic: d.mic.trim(), style: d.style.trim(), notes: d.notes.trim() || null, sampleUrl: d.sampleUrl.trim() || null },
-				}),
-			})
+					license: parent.license || 'MIT',
+					defaultSections: parent.defaultSections ?? null,
+					device: parent.device ?? null,
+					channel: parent.channel,
+					sampleUrl: d.sampleUrl.trim() || null,
+					forkedFrom: { id: parent.id, packId: parent.packId ?? null, version: parent.contentHash ?? 'sha256:unknown' },
+					lineageRoot: parent.lineageRoot || parent.id,
+					originalAuthor: parent.originalAuthor || { name: parent.author || 'anonymous' },
+					attribution: [...(parent.attribution || []), parent.author || 'anonymous'].filter(Boolean),
+					changeNote: d.changeNote.trim(),
+				}
+				title = `Add variant: ${preset.name}`
+				prBody = `Variant of "${parent.name}" (id ${parent.id})${parent.author ? ` by ${parent.author}` : ''}.\n\nWhat changed: ${preset.changeNote}\n\nLicence: ${preset.license} (preserved from the original).`
+			} else {
+				const body = await api(`/api/presets/${encodeURIComponent(chosen.file)}`)
+				preset = {
+					format: 'atem-audio-preset',
+					version: 1,
+					id: PRESET_ID_RE.test(body.id) ? body.id : mintPresetId(),
+					name: chosen.name,
+					mic: d.mic.trim(),
+					style: d.style.trim(),
+					notes: d.notes.trim() || null,
+					author: d.author.trim() || null,
+					license: body.license || 'MIT',
+					defaultSections: body.defaultSections ?? null,
+					device: body.device ?? null,
+					channel: body.channel,
+					sampleUrl: d.sampleUrl.trim() || null,
+				}
+				title = `Add preset: ${preset.name}`
+				prBody = `New preset for ${preset.mic} — ${preset.style}.\n\nLicence: ${preset.license}.`
+			}
+			const url = buildPrUrl(repo, preset, { title, body: prBody })
+			window.open(url, '_blank', 'noopener')
 			CAT.publish = null
-			CAT.q = ''
-			CAT.sort = 'new'
-			await loadCatalogue()
-			showOutcome('ok', `“${chosen.name}” is published`, 'It is in the browser now, newest first. Ratings and notes from other people will show up on its page.')
+			renderBrowser()
+			showOutcome(
+				'ok',
+				isVariant ? 'Your variant is opening on GitHub' : `“${preset.name}” is opening on GitHub`,
+				'Review the pull request there and submit it. Once it’s merged it shows up in the browser — with its own ratings, favourites and comments.',
+			)
 		} catch (err) {
-			CAT.publish.sending = false
 			setStatus(err.message, 'err')
 			renderBrowser()
 		}
 	}
-	wrap.append(el('p', 'heronote', 'Presets are shared under the same MIT licence as the app. Anything you publish can be downloaded, changed and re-shared.'))
+	wrap.append(el('p', 'heronote', 'Presets are shared under the MIT licence, like the app. Anything shared can be downloaded, changed and re-shared — a variant always credits the original.'))
 	return wrap
 }
 

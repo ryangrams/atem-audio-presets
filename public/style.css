@@ -3755,3 +3755,231 @@ body.browsing {
 		animation: none;
 	}
 }
+
+/* ---- community: variants, favourites, threaded comments (added for the fork system) ---------- */
+
+/* Variant badge on a card, and the fork/heart counters. */
+.catforkflag {
+	position: absolute;
+	top: 7px;
+	left: 7px;
+	font-size: 9px;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: var(--cyan);
+	background: rgba(0, 0, 0, 0.55);
+	border: 1px solid var(--line);
+	border-radius: 4px;
+	padding: 2px 5px;
+}
+.catheartn {
+	color: var(--fire);
+	font-size: 11px;
+}
+.cattags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 6px;
+}
+.catvariants {
+	font-size: 10.5px;
+	color: var(--cyan);
+	border: 1px solid var(--line);
+	border-radius: 4px;
+	padding: 1px 6px;
+}
+
+/* Fork lineage / attribution block on a variant's detail page. */
+.heroattr {
+	margin: 4px 0 2px;
+	padding: 8px 10px;
+	background: var(--panel-2);
+	border: 1px solid var(--line-2);
+	border-left: 2px solid var(--cyan);
+	border-radius: 6px;
+}
+.attrline {
+	font-size: 12.5px;
+	color: var(--text);
+}
+.attrparent {
+	border: none;
+	background: transparent;
+	color: var(--cyan);
+	font: inherit;
+	font-size: 12.5px;
+	padding: 0;
+	text-decoration: underline;
+	cursor: pointer;
+}
+.attrparent:disabled {
+	color: var(--dim);
+	text-decoration: none;
+	cursor: default;
+}
+.attrmod {
+	font-size: 12px;
+	color: var(--dim);
+	margin-top: 2px;
+}
+.attrnote {
+	margin: 6px 0 4px;
+	font-size: 12px;
+	line-height: 1.5;
+	color: var(--dim);
+	text-wrap: pretty;
+}
+.attrlic {
+	display: inline-block;
+	font-size: 10px;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: var(--faint);
+}
+
+/* Favorite (heart) toggle + Make a variant, in the hero action column. */
+.heroheart,
+.herofork {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	padding: 7px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: transparent;
+	color: var(--dim);
+	font-size: 12.5px;
+}
+.heroheart svg path {
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.4;
+}
+.heroheart:hover {
+	color: var(--fire);
+	border-color: var(--fire);
+}
+.heroheart.on {
+	color: var(--fire);
+	border-color: var(--fire);
+}
+.heroheart.on svg path {
+	fill: var(--fire);
+	stroke: var(--fire);
+}
+.herofork:hover {
+	color: var(--cyan);
+	border-color: var(--cyan);
+}
+
+/* Variants section. */
+.catvarbox {
+	padding: 16px 18px;
+	border-bottom: 1px solid var(--line-2);
+}
+.catvarintro {
+	margin: -2px 0 12px;
+	font-size: 12px;
+	line-height: 1.5;
+	color: var(--faint);
+	text-wrap: pretty;
+}
+
+/* Comment composer: a column now (textarea, optional review stars, actions). */
+.commentform {
+	flex-direction: column;
+	align-items: stretch;
+	gap: 8px;
+	padding: 10px;
+	background: var(--panel-2);
+	border: 1px solid var(--line-2);
+	border-radius: 8px;
+}
+.commentform.reply {
+	margin: 8px 0 4px;
+	background: var(--well);
+}
+.reviewstars {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+.reviewlab {
+	font-size: 11px;
+	color: var(--faint);
+	margin-right: 4px;
+}
+.reviewstar {
+	border: none;
+	background: transparent;
+	padding: 1px;
+	line-height: 0;
+}
+.reviewstar path {
+	fill: #3a3a3a;
+	transition: fill 120ms cubic-bezier(0.2, 0, 0, 1);
+}
+.reviewstar:hover path,
+.reviewstar.on path {
+	fill: var(--focus);
+}
+.commentactions {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+}
+.commenthint {
+	font-size: 10.5px;
+	color: var(--faint);
+}
+button.ghost {
+	background: transparent;
+	color: var(--dim);
+	border: 1px solid var(--line);
+}
+
+/* Threaded comments. */
+.cauthor {
+	font-weight: 600;
+}
+.creplyto {
+	font-size: 11px;
+	color: var(--faint);
+}
+.cbar {
+	display: flex;
+	gap: 10px;
+	align-items: center;
+}
+.creply {
+	border: none;
+	background: transparent;
+	color: var(--faint);
+	font-size: 11px;
+	padding: 2px 0;
+}
+.creply:hover {
+	color: var(--text);
+}
+.cup.on {
+	color: var(--accent);
+}
+.comment.reply {
+	padding: 8px 0 8px 14px;
+	border-top: 1px solid var(--line-2);
+	border-left: 2px solid var(--line);
+	margin-left: 4px;
+}
+.creplies {
+	margin-top: 6px;
+}
+
+.pubvarinfo {
+	margin: -2px 0 14px;
+	font-size: 12.5px;
+	line-height: 1.55;
+	color: var(--dim);
+	text-wrap: pretty;
+}

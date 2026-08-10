@@ -13,9 +13,17 @@ import { fileURLToPath } from 'node:url'
 import { connect, disconnect, disconnectAll, firmwareInfo, status } from './lib/atem-pool.js'
 import { applyChannel, diffChannel, extractChannel, listChannels, summarizeChannel } from './lib/fairlight.js'
 import { discover } from './lib/discover.js'
+import { mintId, PRESET_ID } from './lib/id.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT ?? 8730)
+
+// The public catalogue repo (where "Share a preset" opens a pull request) and the Turnstile site
+// key (public — it must match the widget the catalogue's comment endpoint verifies against). Both
+// overridable for local testing; the defaults are what a released build ships with. The site key
+// below is Cloudflare's always-passes TEST key until the real widget is provisioned.
+const LIBRARY_REPO = process.env.ATEM_LIBRARY_REPO || 'ryangrams/atem-preset-library'
+const TURNSTILE_SITEKEY = process.env.ATEM_TURNSTILE_SITEKEY || '1x00000000000000000000AA'
 
 /**
  * Where presets and pre-write backups live.
@@ -133,7 +141,7 @@ app.post(
 
 // The UI has to be able to tell the user where their presets and backups actually are: from a clone
 // that is ./presets, but the packaged app passes a per-user directory instead.
-app.get('/api/status', (_req, res) => res.json({ connections: status(), presetDir: PRESET_DIR }))
+app.get('/api/status', (_req, res) => res.json({ connections: status(), presetDir: PRESET_DIR, libraryRepo: LIBRARY_REPO, turnstileSiteKey: TURNSTILE_SITEKEY }))
 
 // Find ATEMs on the network — mDNS plus an admin-API sweep of the caller's known /24s. `hints` is a
 // comma-separated list of addresses used before; their subnets are where switchers actually live.
@@ -412,6 +420,11 @@ app.post(
 			}
 		}
 		if (!body) throw new HttpError(400, 'Nothing to save')
+		// Mint a stable community id the first time a preset is saved, so its future ratings and
+		// comments have an anchor. A fork arrives from the browser with its own fresh id already set;
+		// everything else (a plain save, an install from the catalogue) gets one minted here.
+		if (!body.id || !PRESET_ID.test(body.id)) body.id = mintId()
+		if (!body.license) body.license = 'MIT'
 		body.name = name
 		body.savedAt = new Date().toISOString()
 		body.group = safeName(req.body.group ?? '')
