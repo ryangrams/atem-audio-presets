@@ -31,6 +31,55 @@
 	let scenario = params.get('demo') || 'connected'
 	if (!SCENARIOS[scenario]) scenario = 'connected'
 
+	// ---------------------------------------------------------------- localStorage sandbox
+	//
+	// The demo runs on the SAME origin as the real app (http://127.0.0.1:8730), so every key the
+	// app persists is the real app's own state: kind.A/B, ip.A/B, the recent-address list, the
+	// two-switcher flag, the tips seen-flags (including the first-run tour flag), the community
+	// "installed" set, and the publish author. A demo session must never write through to any of
+	// them. So shadow window.localStorage with a shim that keeps every 'atem-audio-presets' key in
+	// memory — a fresh, deterministic namespace per scenario — and passes everything else through
+	// to the real store, notably the demo's own 'atem-demo-chip-pos' so the chip position persists.
+	const realLS = window.localStorage
+	const memory = new Map()
+	const owned = (k) => String(k).startsWith('atem-audio-presets')
+	let sandboxed = false
+	try {
+		Object.defineProperty(window, 'localStorage', {
+			configurable: true,
+			value: {
+				getItem: (k) => (owned(k) ? (memory.has(String(k)) ? memory.get(String(k)) : null) : realLS.getItem(k)),
+				setItem: (k, v) => {
+					if (owned(k)) memory.set(String(k), String(v))
+					else realLS.setItem(k, v)
+				},
+				removeItem: (k) => {
+					if (owned(k)) memory.delete(String(k))
+					else realLS.removeItem(k)
+				},
+				// Present the rest of the Storage surface so nothing that pokes at it throws. clear()
+				// only empties the sandbox; the real store is never wiped by a demo.
+				clear: () => memory.clear(),
+				key: (i) => realLS.key(i),
+				get length() {
+					return realLS.length
+				},
+			},
+		})
+		sandboxed = true
+	} catch {
+		/* If this origin's localStorage cannot be shadowed, leave it untouched rather than risk
+		   writing real keys — every browser this dev-only harness targets is Chromium. */
+	}
+
+	// The app arms a 500ms first-run auto-tour whenever no channels are loaded and the sequence
+	// seen-flag is unset (app.js startTour → tips.js seen()). Left alone the tour and its sample
+	// switcher hijack every scenario. Mark the sequence seen in the sandbox for every scenario
+	// EXCEPT 'first-run', which exists precisely to show the tour. Only when the sandbox installed —
+	// a write to the real store would corrupt the user's actual onboarding state. This runs
+	// synchronously, before app.js is parsed, so the flag is already set when app.js boots.
+	if (sandboxed && scenario !== 'first-run') localStorage.setItem('atem-audio-presets.tip.seq.first-run-v1', '1')
+
 	// ---------------------------------------------------------------- synthesized switcher
 
 	const band = (shape, frequency, gain, qFactor, bandEnabled = true) => ({
@@ -123,6 +172,10 @@
 	}
 
 	const clone = (v) => JSON.parse(JSON.stringify(v))
+
+	// The last copy's before-state, so /api/undo can put the strips back for real instead of
+	// returning a canned restore the read-back on the same screen would immediately contradict.
+	let lastBackup = null
 
 	const summarize = (c) => ({
 		eqActive: Boolean(c.eq.enabled && c.eq.bands.some((b) => b?.bandEnabled && (b.gain !== 0 || [2, 8, 16].includes(b.shape)))),
@@ -292,6 +345,11 @@
 				}
 			}
 		}
+		if (sections.inputConfig) {
+			// Mirrors lib/fairlight.js diffChannel: the wiring mode compares on the strip's meta.
+			push('inputConfig', 'configuration', to.meta.configuration, from.meta.configuration)
+			push('inputConfig', 'inputLevel', to.meta.inputLevel, from.meta.inputLevel)
+		}
 		return out
 	}
 
@@ -323,19 +381,36 @@
 			const from = body.payload ?? box[`${body.from.input}:${body.from.source}`]
 			const to = Array.isArray(body.to) ? body.to : [body.to]
 			if (path === '/api/apply') await delay(scenario === 'copying' ? 60000 : 1800)
+			const batch = []
 			const results = to.map((t) => {
 				const key = `${t.input}:${t.source}`
 				const cur = box[key]
 				const diff = diffFor(from, cur, body.sections)
 				if (path === '/api/preview') return { ok: true, to: t, label: cur.meta.label, diff }
+				// Snapshot the strip before it changes, so /api/undo can put it back for real. A canned
+				// restore would contradict the read-back the app shows on the same screen.
+				batch.push({ key, to: t, backup: clone(cur) })
+				const remaining = []
 				// Apply for real, so the cards afterwards show what actually happened.
 				if (body.sections.gain) cur.levels.gain = from.levels.gain
 				if (body.sections.volume) cur.levels.faderGain = from.levels.faderGain
 				if (body.sections.pan) cur.levels.balance = from.levels.balance
 				if (body.sections.eq) cur.eq = clone(from.eq)
 				if (body.sections.dynamics) cur.dynamics = clone(from.dynamics)
+				if (body.sections.inputConfig) {
+					// A wiring mode only takes if the destination supports it — a camera input has no mic
+					// configurations, so the mic's config reads back as not-taken, exactly as the real lib does.
+					const m = from.meta
+					const supCfg = cur.meta.supportedConfigurations ?? []
+					const supLvl = cur.meta.supportedInputLevels ?? []
+					if (typeof m.configuration === 'number' && supCfg.includes(m.configuration)) cur.meta.configuration = m.configuration
+					else if (typeof m.configuration === 'number' && m.configuration !== cur.meta.configuration)
+						remaining.push({ section: 'inputConfig', path: 'configuration', from: cur.meta.configuration, to: m.configuration })
+					if (typeof m.inputLevel === 'number' && supLvl.includes(m.inputLevel)) cur.meta.inputLevel = m.inputLevel
+					else if (typeof m.inputLevel === 'number' && m.inputLevel !== 0 && m.inputLevel !== cur.meta.inputLevel)
+						remaining.push({ section: 'inputConfig', path: 'inputLevel', from: cur.meta.inputLevel, to: m.inputLevel })
+				}
 				// One destination refuses the mic's +40 dB, exactly as a camera input would.
-				const remaining = []
 				if (scenario === 'clamped' && body.sections.gain && cur.meta.inputType === 0 && from.levels.gain > 600) {
 					cur.levels.gain = 600
 					remaining.push({ section: 'gain', path: 'gain', from: 600, to: from.levels.gain })
@@ -351,19 +426,112 @@
 					warnings: [],
 				}
 			})
+			if (path === '/api/apply' && batch.length) lastBackup = batch
 			return json({ results })
 		}
 
 		if (path === '/api/undo') {
 			await delay(600)
-			return json({
-				restored: [{ label: 'Camera 1', inputId: 1, sourceId: '-256' }],
-				results: [{ ok: true, meta: { label: 'Camera 1' } }],
-			})
+			if (!lastBackup?.length) return fail(`No backup recorded for ${body?.ip ?? 'this switcher'} in this session`, 404)
+			const restored = []
+			const results = []
+			for (const entry of lastBackup) {
+				// Put the strip back exactly as it was, so the read-back the app runs next agrees.
+				box[entry.key] = clone(entry.backup)
+				const m = entry.backup.meta
+				restored.push({ label: m.label, inputId: m.inputId, sourceId: m.sourceId })
+				results.push({ ok: true, meta: { label: m.label, inputId: m.inputId, sourceId: m.sourceId } })
+			}
+			lastBackup = null
+			return json({ restored, results })
 		}
 
-		if (path === '/api/presets/pack') return json({ name: body.name ?? 'presets', presets })
-		if (path === '/api/presets/import') return json({ imported: presets.map((p) => p.name), skipped: [] })
+		if (path === '/api/presets/pack') {
+			// Honour the same file/group selection exportPack sends, and carry each preset's channel
+			// body plus the pack envelope — a pack of rows without settings imports to nothing.
+			const wanted = Array.isArray(body?.files) ? body.files : null
+			const group = body?.group
+			const rows = presets.filter((p) => (!wanted || wanted.includes(p.file)) && (group === undefined || (p.group ?? '') === group))
+			if (!rows.length) return fail('No presets matched — nothing to export', 404)
+			const packPresets = rows.map((p) => {
+				const full = presetBody(p.file)
+				return {
+					name: full.name,
+					group: full.group,
+					defaultSections: full.defaultSections,
+					device: full.device ? { model: full.device.model ?? null, release: full.device.release ?? null, build: full.device.build ?? null } : null,
+					mic: full.mic,
+					style: full.style,
+					notes: full.notes,
+					sampleUrl: full.sampleUrl,
+					channel: full.channel,
+				}
+			})
+			return json({
+				format: 'atem-audio-preset-pack',
+				version: 1,
+				name: String(body?.name ?? 'ATEM audio presets').slice(0, 120),
+				description: String(body?.description ?? '').slice(0, 2000),
+				author: String(body?.author ?? '').slice(0, 120),
+				createdAt: new Date().toISOString(),
+				presets: packPresets,
+			})
+		}
+		if (path === '/api/presets/import') {
+			// Actually read the uploaded pack (like the real route: import body.pack.presets, suffix
+			// name collisions) instead of echoing the demo's own library back as "imported".
+			const pack = body?.pack
+			if (!Array.isArray(pack?.presets)) return fail('That file is not a preset pack', 400)
+			const imported = []
+			const skipped = []
+			const existing = new Set(presets.map((p) => p.file))
+			const slug = (n) => `${n.toLowerCase().replace(/\W+/g, '-')}.json`
+			for (const entry of pack.presets) {
+				const name = typeof entry?.name === 'string' ? entry.name.trim() : ''
+				if (!name || !entry?.channel?.meta) {
+					skipped.push(entry?.name ?? '(unnamed)')
+					continue
+				}
+				let file = slug(name)
+				let n = 2
+				while (existing.has(file)) file = slug(`${name}-${n++}`)
+				existing.add(file)
+				const grp = entry.group ?? pack.name ?? ''
+				const savedAt = new Date().toISOString()
+				const ch = entry.channel
+				savedBodies[file] = {
+					format: 'atem-audio-preset',
+					version: 1,
+					name,
+					group: grp,
+					defaultSections: entry.defaultSections ?? { gain: true, volume: false, pan: false, eq: true, dynamics: true, inputConfig: false },
+					savedAt,
+					device: entry.device ?? DEVICE,
+					mic: entry.mic ?? null,
+					style: entry.style ?? null,
+					notes: entry.notes ?? null,
+					sampleUrl: entry.sampleUrl ?? null,
+					channel: ch,
+				}
+				presets = [
+					...presets,
+					{
+						file,
+						name,
+						group: grp,
+						order: presets.length,
+						summary: summarize({ eq: ch.eq ?? { enabled: false, bands: [] }, dynamics: ch.dynamics ?? {} }),
+						meta: { label: ch.meta.label },
+						mic: entry.mic ?? null,
+						style: entry.style ?? null,
+						device: DEVICE,
+						savedAt,
+					},
+				]
+				imported.push({ file, name, group: grp })
+			}
+			return json({ imported, skipped })
+		}
 		if (path === '/api/presets') {
 			if (options?.method === 'POST') {
 				const file = `${body.name.toLowerCase().replace(/\W+/g, '-')}.json`
@@ -386,8 +554,15 @@
 			}
 			return json(presetBody(file))
 		}
-		if (path === '/api/snapshot') return json({ channels: channelList().map((c) => box[c.key]) })
-		if (path === '/api/restore') return json({ results: channelList().map((c) => ({ ok: true, key: c.key, label: c.label })) })
+		// Snapshot/restore was cut from the app (whole-switcher snapshot removed), so its stubs are
+		// gone too. Any stray /api/snapshot or /api/restore request now falls to the 404 catch-all
+		// below rather than the real server — it never reaches hardware.
+
+		if (path === '/api/status') {
+			// The help panel fills the "backups live here" path from this. Report the desktop app's
+			// real per-user location so the demo reads like the packaged app, not a dev clone's ./presets.
+			return json({ connections: [], presetDir: '~/Library/Application Support/atem-audio-presets/presets' })
+		}
 
 		// ---- community catalogue ----
 		if (path === '/api/community/presets' && options?.method !== 'POST') {
@@ -505,6 +680,19 @@
 			await new Promise((r) => setTimeout(r, 150))
 			pick('B', '2:-256', { metaKey: true })
 			pick('B', '3:-256', { metaKey: true })
+		}
+		if (scenario === 'copying' || scenario === 'clamped') {
+			// These scenarios name the copy itself — "in progress" / "a value was clamped" — so run it.
+			// performCopy bypasses the askBar confirmation by design (apply() asks; performCopy just
+			// does the copy and reports), so the progress modal ('copying', which holds on the 60s
+			// apply delay) and the clamped outcome are reached without a human clicking Copy → Confirm.
+			await new Promise((r) => setTimeout(r, 200))
+			const src = payloadRef()
+			const to = destinations()
+			const list = Object.entries(sections())
+				.filter(([, v]) => v)
+				.map(([k]) => k)
+			performCopy(src, to, list)
 		}
 	}
 

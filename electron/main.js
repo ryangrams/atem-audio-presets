@@ -84,10 +84,31 @@ function buildMenu() {
 	)
 }
 
+/**
+ * Web storage is keyed by origin, and the origin includes the port. A fresh random port every
+ * launch would hand the packaged app an empty localStorage each time — wiping the saved switcher
+ * address, the recent-address list, the Switcher/Presets choice, and the tour's own seen-flag, so
+ * the first-run tour and its sample switcher would replay on every single launch. So pin a stable
+ * port and only walk upward when it is already taken; fall back to an OS-assigned one only if the
+ * whole range is busy.
+ */
+async function startServerStablePort(server) {
+	const base = 8730
+	for (let port = base; port < base + 20; port++) {
+		try {
+			return await server.start({ port })
+		} catch (e) {
+			if (e?.code === 'EADDRINUSE') continue
+			throw e
+		}
+	}
+	return server.start({ port: 0 })
+}
+
 app.whenReady().then(async () => {
 	try {
 		const server = await import(path.join(__dirname, '..', 'server.js'))
-		const { url } = await server.start({ port: 0 })
+		const { url } = await startServerStablePort(server)
 		serverUrl = url
 		stopServer = server.stop
 	} catch (e) {

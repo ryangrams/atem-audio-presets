@@ -9,7 +9,7 @@ const q = (v) => (v === undefined || v === null ? '—' : (v / 100).toFixed(2))
 const hz = (v) => (v === undefined || v === null ? '—' : v >= 1000 ? `${(v / 1000).toFixed(2)} kHz` : `${v} Hz`)
 const pan = (v) => (v === undefined || v === null ? '—' : v === 0 ? 'centre' : `${v > 0 ? 'R' : 'L'} ${Math.abs(v / 100).toFixed(0)}`)
 
-const SHAPE = { 1: 'Low shelf', 2: 'Low pass', 4: 'Band pass', 8: 'Notch', 16: 'High pass', 32: 'High shelf' }
+const SHAPE = { 1: 'Low shelf', 2: 'Low pass', 4: 'Bell', 8: 'Notch', 16: 'High pass', 32: 'High shelf' }
 const FREQ_RANGE = { 1: 'Low', 2: 'Mid-low', 4: 'Mid-high', 8: 'High' }
 const MIX = { 1: 'Off', 2: 'On', 4: 'AFV' }
 const CONFIG = { 1: 'Mono', 2: 'Stereo', 4: 'Dual mono' }
@@ -108,19 +108,32 @@ async function api(path, options) {
  * about to be visible on the destination card anyway, so the bar only needs to name the action and
  * offer the two buttons; the card below is the detail.
  */
+let askBarActive = null // the in-flight confirm bar's resolver, so a new one can supersede the old
+
 function askBar(title, note, confirmLabel = 'Confirm') {
+	// Only one confirm bar can be live. If another somehow still is, cancel it first — resolve it
+	// false and drop its key listener — so a later Enter can never resolve a stale, superseded
+	// confirmation and fire an unconfirmed copy on top of the current one.
+	if (askBarActive) askBarActive(false)
 	return new Promise((resolve) => {
 		const bar = $('#confirmbar')
+		let settled = false
 		const done = (v) => {
+			if (settled) return
+			settled = true
+			if (askBarActive === done) askBarActive = null
 			bar.hidden = true
 			bar.textContent = ''
 			document.removeEventListener('keydown', onKey)
 			resolve(v)
 		}
 		const onKey = (e) => {
+			// Only the current bar answers keys — a superseded one has already been cancelled above.
+			if (askBarActive !== done) return
 			if (e.key === 'Escape') done(false)
 			if (e.key === 'Enter') done(true)
 		}
+		askBarActive = done
 		bar.hidden = false
 		bar.innerHTML = `
 			<div class="blendfoot">
@@ -136,18 +149,38 @@ function askBar(title, note, confirmLabel = 'Confirm') {
 }
 
 let tourDemo = null // the real state, parked while the tour's sample switcher is on screen
+let connectInFlight = false // a real connect is mid-flight — the auto-tour must not start on top of it
+let autoTourTimer = null // the pending first-run auto-tour, so a connect can cancel it
+
+const SAMPLE_IP_TEXT = 'sample switcher' // what the tour writes into the address boxes
+
+/** Cancel the pending first-run auto-tour — a real connect has taken over. */
+function cancelAutoTour() {
+	if (autoTourTimer) clearTimeout(autoTourTimer)
+	autoTourTimer = null
+}
+
+/** The address a column's box really holds — the tour's placeholder text counts as empty. */
+function typedIp(side) {
+	const v = panel(side).querySelector('.ip').value.trim()
+	return v === SAMPLE_IP_TEXT ? '' : v
+}
 
 /**
- * Abandon the sample without restoring anything — for when a real connection arrives while the
- * sample is on screen. The real channels are about to be written over the top, so the parked state
- * is irrelevant; all that matters is that no sample marking survives to disable the write buttons.
+ * A real connect is arriving while the tour's sample is on screen. End the tour for good — mark the
+ * sequence seen so the auto-tour never replays (otherwise it restarts on the next launch, dragging
+ * the sample back and disabling Copy on the live connection), hide the coach-mark, and restore the
+ * parked columns via exitTourDemo. Any real address the user just typed is preserved across the
+ * restore, which would otherwise put the parked (empty) boxes back over it.
  */
-function dropSample() {
-	tourDemo = null
-	for (const side of ['A', 'B']) panel(side).classList.remove('sample')
-	document.body.classList.remove('sample-on')
-	removeGhost()
+function endTourForConnect() {
+	if (!tourDemo) return
+	const typed = { A: typedIp('A'), B: typedIp('B') }
+	Tips.dismiss('seq.first-run-v1')
 	Tips.hide()
+	exitTourDemo()
+	panel('A').querySelector('.ip').value = typed.A
+	panel('B').querySelector('.ip').value = typed.B
 }
 
 /**
@@ -276,36 +309,44 @@ function diffTable(diff) {
 // ------------------------------------------------------------------ switchers
 
 async function connectSide(side) {
+	// A real connect always wins over the tour's sample. Cancel the pending auto-tour and tear the
+	// sample down first — reading the boxes below would otherwise pick up the 'sample switcher'
+	// placeholder, and the untouched column would keep its fake, copyable channels.
+	cancelAutoTour()
+	if (tourDemo) endTourForConnect()
+
 	// Two-switcher mode is not a mode the user has to find — it is simply what happens when the
-	// destination points somewhere else. Connecting the destination to its own address turns it on;
-	// pointing it back at the source's address turns it off again.
-	if (side === 'B' && !state.two) {
-		const bIp = panel('B').querySelector('.ip').value.trim()
-		const aIp = panel('A').querySelector('.ip').value.trim()
-		if (bIp && bIp !== aIp) {
-			state.two = true
-			applyMode()
-		} else {
-			return connectSingle()
-		}
-	} else if (side === 'A' && state.two) {
-		const bIp = panel('B').querySelector('.ip').value.trim()
-		if (bIp && bIp === panel('A').querySelector('.ip').value.trim()) {
-			state.two = false
-			applyMode()
-			return connectSingle()
-		}
+	// destination points somewhere else. Giving the destination its own address turns it on; pointing
+	// it back at the source's address turns it off again — reachable now from either Connect button.
+	const aIp = panel('A').querySelector('.ip').value.trim()
+	const bIp = panel('B').querySelector('.ip').value.trim()
+	if (!state.two) {
+		// Only the destination taking a different, non-empty address splits the columns apart — and
+		// two-switcher mode is committed below, only once that second connect actually succeeds.
+		if (!(side === 'B' && bIp && bIp !== aIp)) return connectSingle()
+	} else if (bIp && bIp === aIp) {
+		state.two = false
+		applyMode()
+		return connectSingle()
 	}
-	if (!state.two) return connectSingle()
+
+	// Per-side connect (two-switcher). Connect just this column.
 	const s = state[side]
 	s.ip = panel(side).querySelector('.ip').value.trim()
 	if (!s.ip) return
-	if (tourDemo) dropSample()
-	localStorage.setItem(`${LS}.ip.${side}`, s.ip)
 	const dev = panel(side).querySelector('.device')
 	dev.innerHTML = `Connecting to ${esc(s.ip)}…`
+	connectInFlight = true
 	try {
 		const body = await api(`/api/switcher?ip=${encodeURIComponent(s.ip)}`)
+		// The auto-tour could have slipped in during the await; the real connection wins.
+		if (tourDemo) endTourForConnect()
+		// The connect worked — only now commit two-switcher mode, so a typo'd address can never latch
+		// the app into a split it never actually reached.
+		if (!state.two) {
+			state.two = true
+			applyMode()
+		}
 		s.device = body.device
 		s.channels = body.channels
 		s.selection = []
@@ -313,6 +354,7 @@ async function connectSide(side) {
 		s.detail = null
 		s.error = null
 		rememberIp(s.ip)
+		localStorage.setItem(`${LS}.ip.${side}`, s.ip)
 		dev.innerHTML = deviceLine(body.device)
 		renderChannels(side)
 		renderDetail(side)
@@ -320,6 +362,7 @@ async function connectSide(side) {
 		// Each column's own device row already says it is connected — no need to repeat it below.
 		setStatus('')
 	} catch (e) {
+		if (tourDemo) endTourForConnect()
 		s.channels = []
 		s.detail = null
 		s.error = { ip: s.ip, message: e.message }
@@ -328,11 +371,16 @@ async function connectSide(side) {
 		renderDetail(side)
 		log(`Connect failed for ${esc(s.ip)}: ${esc(e.message)}`, 'err')
 		setStatus(`Could not reach ${s.ip}`, 'err')
+	} finally {
+		connectInFlight = false
 	}
 }
 
 /** The "● model — firmware x build y" line, rendered wherever the current mode shows it. */
 function deviceLine(device) {
+	// A parked side can carry an ip but no device (a first-ever failed two-switcher connect). Never
+	// dereference a null device \u2014 that would throw mid-restore and strand the sample switcher.
+	if (!device) return '<span class="err">\u25cf</span> Not connected'
 	return (
 		`<span class="ok">\u25cf</span> ${esc(device.model ?? 'ATEM')} \u2014 ` +
 		`firmware ${esc(device.release ?? '?')} build <code>${esc(device.build ?? '?')}</code>`
@@ -357,17 +405,21 @@ function applyMode() {
 	const bConnect = panel('B').querySelector('.connect')
 	bIp.disabled = false
 	bConnect.disabled = false
-	if (!state.two) bIp.value = panel('A').querySelector('.ip').value
+	// The destination box shadows the source address on one switcher. But once the user has typed a
+	// *different* address there (heading for two-switcher mode, which only commits on B's Connect),
+	// leave it alone — mirroring would wipe what they are actively typing.
+	if (!state.two) {
+		const aVal = panel('A').querySelector('.ip').value
+		if (document.activeElement !== bIp && (bIp.value === '' || bIp.value === aVal)) bIp.value = aVal
+	}
 	bIp.title = state.two ? '' : 'Same switcher — enter a different address to copy across two'
 	const bTitle = $('#title-B')
 	bTitle.textContent = 'Destination'
 	bTitle.title = isLib('B')
 		? 'Saving into the preset library'
 		: state.two
-			? '\u2318 / shift-click for several channels'
-			: 'Same switcher \u00b7 \u2318 / shift-click for several channels'
-	const snapA = $('#snapshot-A')
-	if (snapA) snapA.textContent = state.two ? 'Snapshot (from)' : 'Download snapshot'
+			? `${MOD} / shift-click for several channels`
+			: `Same switcher \u00b7 ${MOD} / shift-click for several channels`
 	localStorage.setItem(`${LS}.two`, state.two ? '1' : '0')
 	renderRecent()
 	updateSummary()
@@ -378,36 +430,43 @@ function applyMode() {
 async function connectSingle() {
 	const ip = panel('A').querySelector('.ip').value.trim()
 	if (!ip) return
+	cancelAutoTour()
 	// A real switcher always wins over the tour's sample — otherwise the sample's disabled buttons and
 	// "not real" badges would be inherited by a live connection.
-	if (tourDemo) dropSample()
+	if (tourDemo) endTourForConnect()
+	connectInFlight = true
 	localStorage.setItem(`${LS}.ip.A`, ip)
 	const dev = panel('A').querySelector('.device')
 	dev.innerHTML = `Connecting to ${esc(ip)}\u2026`
 	try {
 		const body = await api(`/api/switcher?ip=${encodeURIComponent(ip)}`)
+		// The auto-tour could have fired during the await (a connect started inside the first 500ms).
+		if (tourDemo) endTourForConnect()
 		rememberIp(ip)
 		for (const side of ['A', 'B']) {
 			const s = state[side]
 			s.ip = ip
 			s.device = body.device
+			panel(side).querySelector('.ip').value = ip
+			panel(side).querySelector('.device').innerHTML = deviceLine(body.device)
+			if (isLib(side)) {
+				// The library column keeps its list, its selected preset and its card — only the
+				// underlying address follows along. Clearing selection/detail here (as the old shared
+				// reset did, before this guard) left a stale preset card on screen with Copy dead.
+				s.channels = []
+				continue
+			}
 			s.channels = body.channels
 			s.selection = []
 			s.anchor = null
 			s.detail = null
 			s.error = null
-			panel(side).querySelector('.ip').value = ip
-			panel(side).querySelector('.device').innerHTML = deviceLine(body.device)
-			if (isLib(side)) {
-				// The library column keeps its list; only its underlying address follows along.
-				s.channels = []
-				continue
-			}
 			renderSideAll(side)
 		}
 		log(`Connected to ${esc(ip)} \u2014 ${body.channels.length} audio strips.`, 'ok')
 		setStatus('')
 	} catch (e) {
+		if (tourDemo) endTourForConnect()
 		dev.innerHTML = '<span class="err">\u25cf</span> Not connected'
 		for (const side of ['A', 'B']) {
 			const s = state[side]
@@ -418,6 +477,8 @@ async function connectSingle() {
 		}
 		log(`Connect failed for ${esc(ip)}: ${esc(e.message)}`, 'err')
 		setStatus(`Could not reach ${ip}`, 'err')
+	} finally {
+		connectInFlight = false
 	}
 }
 
@@ -474,12 +535,17 @@ function setKind(side, kind) {
 function renderLibrary(side) {
 	const list = panel(side).querySelector('.channel-list')
 	list.textContent = ''
+	// The library is a single-select list of presets — never advertise it as multi-select.
+	list.setAttribute('aria-multiselectable', 'false')
 	panel(side).querySelector('.toggle-minor')?.remove()
 	panel(side).querySelector('.libfoot')?.remove()
 
 	const presets = state.library.presets.filter((p) => p.format !== 'atem-audio-snapshot')
 	if (!presets.length) return renderLibraryEmpty(side, list)
 
+	// Roving tabindex: exactly one preset row is a tab stop (the selected one, else the first), and
+	// the arrow keys move focus between them — the same pattern renderChannels uses.
+	const focusFile = state.library.selectedFile ?? presets[0]?.file
 	const groups = [...new Set(presets.map((p) => p.group || ''))].sort((a, b) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b)))
 	for (const g of groups) {
 		if (groups.length > 1 || g) {
@@ -503,7 +569,7 @@ function renderLibrary(side) {
 			row.dataset.file = p.file
 			row.setAttribute('role', 'option')
 			row.setAttribute('aria-selected', state.library.selectedFile === p.file ? 'true' : 'false')
-			row.tabIndex = 0
+			row.tabIndex = p.file === focusFile ? 0 : -1
 			row.dataset.key = p.file
 			// The thumbnail is the preset's own EQ curve — real data, not an icon standing in for it.
 			const spark = el('span', 'pspark')
@@ -664,9 +730,13 @@ function renderChannels(side) {
 	const s = state[side]
 	const list = panel(side).querySelector('.channel-list')
 	list.textContent = ''
+	// Only a genuinely multi-select list should advertise itself as one.
+	list.setAttribute('aria-multiselectable', s.multi ? 'true' : 'false')
 	const visible = s.channels.filter((c) => s.showMinor || !c.minor)
-	// Roving tabindex: the list is one tab stop, and the arrow keys move inside it.
-	const focusKey = s.selection[s.selection.length - 1] ?? visible[0]?.key
+	// Roving tabindex: the list is one tab stop, and the arrow keys move inside it. The focused row
+	// must be one that is actually on screen — falling back to a selected-but-hidden MADI strip would
+	// give every rendered row tabIndex -1 and drop the whole list out of the tab order.
+	const focusKey = [...s.selection].reverse().find((k) => visible.some((c) => c.key === k)) ?? visible[0]?.key
 	for (const c of visible) {
 		const on = s.selection.includes(c.key)
 		const row = el('div', `chan${c.minor ? ' minor' : ''}${on ? ' selected' : ''}`)
@@ -690,7 +760,8 @@ function renderChannels(side) {
 	if (hidden > 0) {
 		const btn = el('button', 'toggle-minor')
 		btn.setAttribute('aria-expanded', String(Boolean(s.showMinor)))
-		btn.innerHTML = `<span class="chev" aria-hidden="true">▾</span><span>${s.showMinor ? `Hide ${hidden} MADI strips` : `Show ${hidden} MADI strips`}</span>`
+		const noun = hidden === 1 ? 'MADI strip' : 'MADI strips'
+		btn.innerHTML = `<span class="chev" aria-hidden="true">▾</span><span>${s.showMinor ? `Hide ${hidden} ${noun}` : `Show ${hidden} ${noun}`}</span>`
 		btn.onclick = () => {
 			s.showMinor = !s.showMinor
 			renderChannels(side)
@@ -741,10 +812,24 @@ async function loadDetail(side, key) {
 	const s = state[side]
 	const c = channelFor(side, key)
 	if (!c) return
+	// During the tour the "switcher" is a local fixture, not something on the network. Serve its
+	// strip bodies from the parked tour data — a real /api/channel to ip='sample' would hang until it
+	// timed out and then blank the card.
+	if (tourDemo?.bodies) {
+		s.detail = tourDemo.bodies[key] ? JSON.parse(JSON.stringify(tourDemo.bodies[key])) : null
+		renderDetail(side)
+		if (side === 'A' && isLib('B')) renderDetail('B')
+		updateActionUI()
+		return
+	}
+	// Stamp each read so a slow earlier one cannot overwrite the detail for the strip now selected.
+	const seq = (s.detailSeq = (s.detailSeq ?? 0) + 1)
 	try {
 		const body = await api(`/api/channel?ip=${encodeURIComponent(s.ip)}&input=${c.inputId}&source=${encodeURIComponent(c.sourceId)}`)
+		if (seq !== s.detailSeq) return
 		s.detail = body.channel
 	} catch (e) {
+		if (seq !== s.detailSeq) return
 		s.detail = null
 		log(`Could not read ${esc(key)}: ${esc(e.message)}`, 'err')
 	}
@@ -791,12 +876,16 @@ function renderDetail(side) {
 	}
 	const cardBox = el('div')
 	box.append(cardBox)
+	// When several destination channels are selected, the card shows one preview but must not
+	// pretend to be a single channel — its header says "Multi-select · N channels" instead.
+	const destCount = side === 'B' && !isLib('B') ? selectedKeys('B').length : 1
 	renderStripCard(cardBox, d, {
 		sections: state.sections,
 		// The source card is where sections are picked; the destination card previews the result —
 		// the blend ratio when the blend bar is open, otherwise a straight incoming copy.
 		source: side === 'A',
 		incoming: side === 'B' ? (blendOpen ? blendPreviewFor(d) : sourceChannel()) : null,
+		title: destCount > 1 ? { label: 'Multi-select', sub: `${destCount} channels` } : null,
 	})
 	// A preset is more than its numbers — say what it was made with and for. It sits under the card:
 	// the settings are what the user came to read, the provenance is what they check afterwards.
@@ -818,21 +907,28 @@ function renderSaveCard(box) {
 		.filter(([, v]) => v)
 		.map(([k]) => ({ gain: 'Gain', volume: 'Volume', pan: 'Pan', eq: 'EQ', dynamics: 'Dynamics', inputConfig: 'Input' })[k])
 
+	// Preserve anything already typed here: this whole form is rebuilt on every section toggle on the
+	// source card, which would otherwise wipe the name, mic, style and notes the user just entered.
+	// Fall back to the overwritten preset's stored values, then to empty. (?? keeps a deliberately
+	// cleared field cleared, since only null/undefined fall through.)
+	const prev = { name: $('#np-name')?.value, group: $('#np-group')?.value, mic: $('#np-mic')?.value, style: $('#np-style')?.value, notes: $('#np-notes')?.value, sample: $('#np-sample')?.value }
+	const val = (k, fallback) => esc(prev[k] ?? fallback ?? '')
+
 	box.innerHTML = `<div class="savecard">
 		<div class="saverow">
-			<input type="text" id="np-name" placeholder="Preset name" value="${esc(over?.name ?? (src ? `${src.meta.label}` : ''))}" />
-			<input type="text" id="np-group" list="np-groups" placeholder="Group (optional)" value="${esc(over?.group ?? '')}" />
+			<input type="text" id="np-name" placeholder="Preset name" value="${val('name', over?.name ?? (src ? `${src.meta.label}` : ''))}" />
+			<input type="text" id="np-group" list="np-groups" placeholder="Group (optional)" value="${val('group', over?.group)}" />
 			<datalist id="np-groups">${groups.map((g) => `<option value="${esc(g)}"></option>`).join('')}</datalist>
 		</div>
 		<div class="saverow">
-			<input type="text" id="np-mic" list="np-mics" placeholder="Mic or source \u2014 Shure SM7B, lectern gooseneck\u2026" value="${esc(over?.mic ?? '')}" />
-			<input type="text" id="np-style" list="np-styles" placeholder="Style \u2014 Podcast, Live vocal\u2026" value="${esc(over?.style ?? '')}" />
+			<input type="text" id="np-mic" list="np-mics" placeholder="Mic or source \u2014 Shure SM7B, lectern gooseneck\u2026" value="${val('mic', over?.mic)}" />
+			<input type="text" id="np-style" list="np-styles" placeholder="Style \u2014 Podcast, Live vocal\u2026" value="${val('style', over?.style)}" />
 			<datalist id="np-mics">${COMMON_MICS.map((m) => `<option value="${esc(m)}"></option>`).join('')}</datalist>
 			<datalist id="np-styles">${PRESET_STYLES.map((s) => `<option value="${esc(s)}"></option>`).join('')}</datalist>
 		</div>
 		<div class="saverow">
-			<input type="text" id="np-notes" placeholder="Notes \u2014 what it suits, what to tweak by ear" value="${esc(over?.notes ?? '')}" />
-			<input type="text" id="np-sample" class="half" placeholder="Link to a sample (optional)" value="${esc(over?.sampleUrl ?? '')}" />
+			<input type="text" id="np-notes" placeholder="Notes \u2014 what it suits, what to tweak by ear" value="${val('notes', over?.notes)}" />
+			<input type="text" id="np-sample" class="half" placeholder="Link to a sample (optional)" value="${val('sample', over?.sampleUrl)}" />
 		</div>
 		<div class="savenote">${
 			over
@@ -1011,6 +1107,9 @@ let lastApply = null
 async function apply() {
 	// Destination decides the verb: a switcher gets a copy, the library gets a save.
 	if (isLib('B')) return savePresetFlow()
+	const btn = $('#apply')
+	// A copy (or its confirmation) is already under way — a second click must not start another.
+	if (btn.disabled) return
 	// A plain copy replaces outright — it is not a blend, so leave blend mode rather than let the
 	// bar sit open over a preview that no longer describes what just happened.
 	closeBlend()
@@ -1028,21 +1127,30 @@ async function apply() {
 		.map(([k]) => k)
 	if (!list.length) return log('Nothing selected to copy.', 'warn')
 
-	// Count the changes first, so the confirmation says how much is actually moving.
-	let changes = null
+	// Hold Copy disabled from here through the whole preview + confirm + write, so a double-click
+	// during the preview round-trip cannot launch two overlapping copies.
+	btn.disabled = true
 	try {
-		const pre = await api('/api/preview', { method: 'POST', body: JSON.stringify({ ...src, to, sections: sections() }) })
-		changes = pre.results.reduce((n, r) => n + r.diff.length, 0)
-	} catch {
-		/* preview is a courtesy — if it fails, still offer the copy */
+		// Count the changes first, so the confirmation says how much is actually moving.
+		let changes = null
+		try {
+			const pre = await api('/api/preview', { method: 'POST', body: JSON.stringify({ ...src, to, sections: sections() }) })
+			changes = pre.results.reduce((n, r) => n + r.diff.length, 0)
+		} catch {
+			/* preview is a courtesy — if it fails, still offer the copy */
+		}
+		const ok = await askBar(
+			to.length === 1 ? `Copy onto ${to[0].label}?` : `Copy onto ${to.length} channels?`,
+			`${list.join(', ')}${changes === null ? '' : ` · ${changes} field${changes === 1 ? '' : 's'} change`} · every destination is backed up first.`,
+			to.length === 1 ? 'Copy' : `Copy to ${to.length}`
+		)
+		if (!ok) return
+		await performCopy(src, to, list)
+	} finally {
+		// performCopy manages the button around the write itself; recompute from state so the button
+		// ends up correct whether the user cancelled, the copy ran, or an error was thrown.
+		updateActionUI()
 	}
-	const ok = await askBar(
-		to.length === 1 ? `Copy onto ${to[0].label}?` : `Copy onto ${to.length} channels?`,
-		`${list.join(', ')}${changes === null ? '' : ` · ${changes} field${changes === 1 ? '' : 's'} change`} · every destination is backed up first.`,
-		to.length === 1 ? 'Copy' : `Copy to ${to.length}`
-	)
-	if (!ok) return
-	await performCopy(src, to, list)
 }
 
 /** Sends one copy and reports the outcome — shared by a confirmed Copy and by Redo, which replays
@@ -1051,6 +1159,7 @@ async function performCopy(src, to, list) {
 	hideOutcome()
 	$('#apply').disabled = true
 	const endProgress = showProgress(to, to.length === 1 ? `Copying onto ${to[0].label}` : `Copying onto ${to.length} channels`)
+	let wrote = false
 	try {
 		const body = await api('/api/apply', { method: 'POST', body: JSON.stringify({ ...src, to, sections: sections() }) })
 		clearLog()
@@ -1104,7 +1213,7 @@ async function performCopy(src, to, list) {
 		// A fresh copy is what Redo replays next time; a new one replaces whatever it could have redone.
 		lastApply = { src, to, list }
 		$('#redo').disabled = true
-		await refreshAfterWrite()
+		wrote = true
 	} catch (e) {
 		log(esc(e.message), 'err')
 		setStatus('')
@@ -1113,6 +1222,17 @@ async function performCopy(src, to, list) {
 	} finally {
 		endProgress()
 		$('#apply').disabled = false
+	}
+	// Re-reading the lists is a courtesy that runs AFTER the copy is done and reported. Keep it out of
+	// the try above: a transient failure here (someone grabbing the switcher's last control connection
+	// in the moment after the write) must not be reported as "the copy did not run" — it succeeded and
+	// was read back and verified.
+	if (wrote) {
+		try {
+			await refreshAfterWrite()
+		} catch {
+			setStatus('Copied and verified, but re-reading the switcher failed — press Connect to refresh the lists', 'warn')
+		}
 	}
 }
 
@@ -1287,6 +1407,11 @@ async function applyBlend() {
 		setStatus(e.message, 'warn')
 		return
 	}
+	// A blend mixes against each destination's own values, so several destinations give several
+	// different results — and only one /api/apply retains a backup for Undo. The action UI disables
+	// Blend for multiple destinations, but that only lands after the selection's read completes, so
+	// guard here too: between the ⌘-click and the response the bar is briefly clickable with two.
+	if (to.length > 1) return setStatus('Blend works on one destination channel at a time — the mix depends on what is already there.', 'warn')
 	const secObj = state.sections
 	const list = Object.entries(secObj)
 		.filter(([, v]) => v)
@@ -1299,6 +1424,7 @@ async function applyBlend() {
 	$('#apply').disabled = true
 	$('.blendgo').disabled = true
 	const endProgress = showProgress(to, to.length === 1 ? `Blending with ${to[0].label}` : `Blending onto ${to.length} channels`)
+	let wrote = false
 	try {
 		const results = []
 		for (const t of to) {
@@ -1337,7 +1463,7 @@ async function applyBlend() {
 		lastApply = null
 		$('#redo').disabled = true
 		closeBlend()
-		await refreshAfterWrite()
+		wrote = true
 	} catch (e) {
 		log(esc(e.message), 'err')
 		setStatus('')
@@ -1345,6 +1471,18 @@ async function applyBlend() {
 	} finally {
 		endProgress()
 		$('#apply').disabled = false
+		// Re-enable the blend bar's own button — the failure path leaves the bar open, and nothing
+		// else restores it (only closeBlend, which the success path calls, rebuilds the bar).
+		const go = $('#blendbar .blendgo')
+		if (go) go.disabled = false
+	}
+	// Refresh outside the try: a failed read-back of the lists must not read as a failed blend.
+	if (wrote) {
+		try {
+			await refreshAfterWrite()
+		} catch {
+			setStatus('Blended and verified, but re-reading the switcher failed — press Connect to refresh the lists', 'warn')
+		}
 	}
 }
 
@@ -1366,7 +1504,7 @@ async function savePresetFlow() {
 	const notes = $('#np-notes')?.value.trim() || null
 	const sampleUrl = $('#np-sample')?.value.trim() || null
 	const over = currentPreset()
-	const overFile = over ? state.library.selectedFile : null
+	let overFile = over ? state.library.selectedFile : null
 
 	if (overFile) {
 		const ok = await askConfirm(
@@ -1376,6 +1514,21 @@ async function savePresetFlow() {
 			'Overwrite'
 		)
 		if (!ok) return
+	} else {
+		// A brand-new save whose name matches an existing preset would silently replace that file
+		// server-side (it derives the same file name). Catch the collision and confirm first — and
+		// reuse the existing file so the server overwrites the right one deterministically.
+		const clash = state.library.presets.find((p) => (p.name ?? '').trim().toLowerCase() === name.toLowerCase())
+		if (clash) {
+			const ok = await askConfirm(
+				'Replace existing preset?',
+				`<p>A preset named <b>${esc(clash.name)}</b> already exists.</p>` +
+					`<p class="muted">Saving replaces it — the old version is kept in presets/_backups/.</p>`,
+				'Replace'
+			)
+			if (!ok) return
+			overFile = clash.file
+		}
 	}
 
 	$('#apply').disabled = true
@@ -1396,9 +1549,12 @@ async function savePresetFlow() {
 		state.library.cache[body.file] = null
 		delete state.library.cache[body.file]
 		renderSideAll('B')
-		setStatus(`\u2713 Saved preset \u201c${name}\u201d`, 'ok')
-		showOutcome('ok', `Saved “${name}”`, `The whole channel is stored. ${Object.entries(sections()).filter(([, v]) => v).map(([k]) => SECTION_NAMES[k]).join(', ') || 'No section'} will come back ticked when you use it.`)
-		log(`Saved preset \u201c${esc(name)}\u201d from ${esc(src.meta.label)}${group ? ` in group ${esc(group)}` : ''}.`, 'ok')
+		// Echo the name the server actually stored \u2014 safeName may have stripped characters (an
+		// apostrophe, say), so the toast must not claim a name the file was not saved under.
+		const savedName = body.name ?? name
+		setStatus(`\u2713 Saved preset \u201c${savedName}\u201d`, 'ok')
+		showOutcome('ok', `Saved “${savedName}”`, `The whole channel is stored. ${Object.entries(sections()).filter(([, v]) => v).map(([k]) => SECTION_NAMES[k]).join(', ') || 'No section'} will come back ticked when you use it.`)
+		log(`Saved preset \u201c${esc(savedName)}\u201d from ${esc(src.meta.label)}${group ? ` in group ${esc(group)}` : ''}.`, 'ok')
 	} catch (e) {
 		setStatus(e.message, 'err')
 		log(esc(e.message), 'err')
@@ -1427,7 +1583,9 @@ async function refreshSide(side) {
 
 async function undo() {
 	const s = state.B
-	if (!s.ip) return log('Connect the destination switcher first.', 'err')
+	// Route this through setStatus, not a bare log() — the log drawer ships hidden, so a log-only
+	// message made Undo with no destination connected look like it did nothing at all.
+	if (!s.ip) return setStatus('Connect the destination switcher first', 'err')
 	const ok = await askConfirm(
 		'Undo the last copy?',
 		`<p>Restores the channel on <strong>${esc(s.ip)}</strong> to how it was before the last copy.</p>`,
@@ -1436,6 +1594,7 @@ async function undo() {
 	if (!ok) return
 	hideOutcome()
 	const endProgress = showProgress([{ label: `the last copy on ${s.ip}` }], 'Restoring the backup')
+	let restored = false
 	try {
 		const body = await api('/api/undo', { method: 'POST', body: JSON.stringify({ ip: s.ip }) })
 		const names = body.restored.map((m) => `${m.label} (${m.inputId}:${m.sourceId})`)
@@ -1445,12 +1604,21 @@ async function undo() {
 		// The copy this just undid can be redone — but only that one, and only until something else happens.
 		$('#redo').disabled = !(lastApply && lastApply.to[0]?.ip === s.ip)
 		showOutcome('ok', `Put back ${names.length} channel${names.length === 1 ? '' : 's'}`, `${names.join(', ')} — restored from the backup taken before the copy.`, { details: true })
-		await refreshAfterWrite()
+		restored = true
 	} catch (e) {
 		log(esc(e.message), 'err')
 		showError('Could not undo', e.message)
 	} finally {
 		endProgress()
+	}
+	// Refresh outside the try: a failed read-back must not read as "could not undo" after the restore
+	// in fact succeeded (which would invite a second undo that fails with "No backup recorded").
+	if (restored) {
+		try {
+			await refreshAfterWrite()
+		} catch {
+			setStatus('Undone, but re-reading the switcher failed — press Connect to refresh the lists', 'warn')
+		}
 	}
 }
 
@@ -1473,33 +1641,6 @@ async function loadPresets() {
 	updateActionUI()
 }
 
-async function restoreSnapshot(snapshot) {
-	const s = state.B
-	if (!s.ip) return log('Connect the destination switcher first.', 'err')
-	const list = Object.entries(sections())
-		.filter(([, v]) => v)
-		.map(([k]) => k)
-	const ok = await askConfirm(
-		'Restore a whole switcher?',
-		`<p>Push <strong>${snapshot.channels.length}</strong> strips (${esc(list.join(', '))}) onto <strong>${esc(s.ip)}</strong>.</p>` +
-			`<p class="muted">This overwrites every channel the snapshot can match. Only the last single-channel copy is undoable.</p>`,
-		'Restore all'
-	)
-	if (!ok) return
-	try {
-		const body = await api('/api/restore', { method: 'POST', body: JSON.stringify({ ip: s.ip, snapshot, sections: sections() }) })
-		clearLog()
-		const ok = body.results.filter((r) => r.ok)
-		log(`Restored ${ok.length}/${body.results.length} strips onto ${esc(s.ip)}.`, 'ok')
-		for (const r of body.results.filter((r) => !r.ok)) log(`✗ ${esc(r.key)} ${esc(r.label)}: ${esc(r.error)}`, 'err')
-		showResult()
-		await refreshAfterWrite()
-	} catch (e) {
-		log(esc(e.message), 'err')
-		showResult()
-	}
-}
-
 function download(filename, body) {
 	const blob = new Blob([JSON.stringify(body, null, 2)], { type: 'application/json' })
 	const a = document.createElement('a')
@@ -1507,14 +1648,6 @@ function download(filename, body) {
 	a.download = filename
 	a.click()
 	URL.revokeObjectURL(a.href)
-}
-
-async function snapshot(side) {
-	const s = state[side]
-	if (!s.ip) return log('Connect that switcher first.', 'err')
-	const body = await api(`/api/snapshot?ip=${encodeURIComponent(s.ip)}`)
-	download(`atem-audio-${s.ip}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.json`, body)
-	log(`Downloaded a snapshot of all ${body.channels.length} strips on ${esc(s.ip)}.`, 'ok')
 }
 
 // ------------------------------------------------------------------ wiring
@@ -1587,48 +1720,45 @@ $('#swap').onclick = () => {
 	connectSide('A')
 	connectSide('B')
 }
-// The section checkboxes are rendered inside the source card, which is rebuilt on every
-// selection, so bind by delegation rather than to the elements themselves.
-document.addEventListener('change', (e) => {
-	const input = e.target.closest('input[data-sec]')
-	if (!input) return
-	state.sections[input.dataset.sec] = input.checked
-	renderDetail('A')
-	renderDetail('B')
-})
-
 $('#apply').onclick = apply
 $('#undo').onclick = undo
 $('#redo').onclick = redo
 $('#blend').onclick = toggleBlend
-$('#snapshot-A')?.addEventListener('click', () => snapshot('A'))
-$('#snapshot-B')?.addEventListener('click', () => snapshot('B'))
 async function importFile(e) {
-	const file = e.target.files[0]
+	const input = e.target
+	const file = input.files[0]
 	if (!file) return
-	const body = JSON.parse(await file.text())
-	if (body.format === 'atem-audio-snapshot') {
-		await restoreSnapshot(body)
-	} else if (body.format === 'atem-audio-preset-pack' || Array.isArray(body.presets)) {
-		const r = await api('/api/presets/import', { method: 'POST', body: JSON.stringify({ pack: body }) })
-		await loadPresets()
-		setStatus(`Imported ${r.imported.length} preset${r.imported.length === 1 ? '' : 's'}`, 'ok')
-		log(`Imported <strong>${r.imported.length}</strong> preset${r.imported.length === 1 ? '' : 's'} from “${esc(body.name ?? file.name)}”.`, 'ok')
-		for (const s of r.skipped) log(`Skipped “${esc(s)}” — no channel data.`, 'warn')
-	} else if (body.channel) {
-		// An imported preset joins the library like any other; it is not a separate mode.
-		const name = body.name ?? file.name.replace(/\.json$/, '')
-		await api('/api/presets', {
-			method: 'POST',
-			body: JSON.stringify({ name, group: body.group ?? '', defaultSections: body.defaultSections ?? sections(), payload: body }),
-		})
-		await loadPresets()
-		setStatus(`Imported preset “${name}”`, 'ok')
-		log(`Imported “${esc(name)}” into the preset library.`, 'ok')
-	} else {
-		log('That file is neither a channel preset nor a switcher snapshot.', 'err')
+	// A malformed file must fail loudly, not silently: JSON.parse throws on bad JSON and the api()
+	// calls can reject. Wrap the whole thing, and reset the input in a finally so re-picking the same
+	// file fires change again.
+	try {
+		const body = JSON.parse(await file.text())
+		if (body.format === 'atem-audio-preset-pack' || Array.isArray(body.presets)) {
+			const r = await api('/api/presets/import', { method: 'POST', body: JSON.stringify({ pack: body }) })
+			await loadPresets()
+			setStatus(`Imported ${r.imported.length} preset${r.imported.length === 1 ? '' : 's'}`, 'ok')
+			log(`Imported <strong>${r.imported.length}</strong> preset${r.imported.length === 1 ? '' : 's'} from “${esc(body.name ?? file.name)}”.`, 'ok')
+			for (const s of r.skipped) log(`Skipped “${esc(s)}” — no channel data.`, 'warn')
+		} else if (body.channel) {
+			// An imported preset joins the library like any other; it is not a separate mode.
+			const name = body.name ?? file.name.replace(/\.json$/, '')
+			await api('/api/presets', {
+				method: 'POST',
+				body: JSON.stringify({ name, group: body.group ?? '', defaultSections: body.defaultSections ?? sections(), payload: body }),
+			})
+			await loadPresets()
+			setStatus(`Imported preset “${name}”`, 'ok')
+			log(`Imported “${esc(name)}” into the preset library.`, 'ok')
+		} else {
+			setStatus('That file is not a preset or a preset pack', 'err')
+			log('That file is not a preset or a preset pack.', 'err')
+		}
+	} catch (err) {
+		setStatus('Could not import that file', 'err')
+		log(`Could not import that file: ${esc(err.message)}`, 'err')
+	} finally {
+		input.value = ''
 	}
-	e.target.value = ''
 }
 
 $('#help-open').onclick = () => toggleHelp()
@@ -1685,9 +1815,15 @@ document.addEventListener('keydown', (e) => {
 	}
 	e.preventDefault()
 	const key = row.dataset.key
-	row.click()
+	if (!key) return
+	// Pass the real KeyboardEvent through so its ⌘/ctrl/shift state reaches selectChannel's
+	// multi-select branches — row.click() would synthesise a modifier-less MouseEvent, collapsing
+	// every keyboard Enter/Space to a single selection despite aria-multiselectable. Preset rows keep
+	// their own click handler (selectChannel bails for the library side).
+	if (isLib(side)) row.click()
+	else selectChannel(side, key, e)
 	// The list is rebuilt by the selection, so put focus back on the same strip.
-	if (key) setTimeout(() => [...panel(side).querySelectorAll('.chan')].find((r) => r.dataset.key === key)?.focus(), 0)
+	setTimeout(() => [...panel(side).querySelectorAll('.chan')].find((r) => r.dataset.key === key)?.focus(), 0)
 })
 
 updateSummary()
@@ -1776,6 +1912,11 @@ function renderRecent() {
  * dismissed.
  */
 function renderCardHint(side) {
+	// The tour owns the coach-mark layer while it runs. A stray hint fired from a re-render (the ghost
+	// demo toggles blocks, which re-renders both cards) would replace the running tour step at step 4,
+	// orphan the sequence — done() never runs, the seen-flag never sets, the sample switcher is left
+	// stranded with Copy disabled — and auto-replay on every launch. So never hint during the tour.
+	if (tourDemo) return
 	if (side === 'A' && state.A.detail) {
 		Tips.show({
 			key: 'blocks',
@@ -1787,6 +1928,9 @@ function renderCardHint(side) {
 		return
 	}
 	if (side === 'B' && !isLib('B') && state.B.channels.length && selectedKeys('B').length < 2) {
+		// One hint at a time: don't let the destination hint stomp the blocks hint before it has been
+		// read (both share the single tip slot, and a replacement never marks the old one seen).
+		if (state.A.detail && !Tips.isSeen('blocks')) return
 		Tips.show({
 			key: 'multi',
 			target: '#panel-B .channel-list',
@@ -1796,7 +1940,7 @@ function renderCardHint(side) {
 		})
 		return
 	}
-	if (side === 'A' && state.A.channels.length && !Tips.isSeen('blocks')) {
+	if (side === 'A' && state.A.channels.length) {
 		Tips.show({
 			key: 'kinds',
 			target: '#panel-A .kinds',
@@ -1916,9 +2060,17 @@ function enterTourDemo() {
 	const bodies = {}
 	for (const [inputId, label, mic] of TOUR_DEFS) bodies[`${inputId}:-256`] = tourChannel(inputId, label, mic)
 	const device = { model: 'ATEM Mini Extreme ISO', release: '10.3', build: 'sample', ip: 'sample' }
-	tourDemo = { A: { ...state.A }, B: { ...state.B }, ipA: panel('A').querySelector('.ip').value, ipB: panel('B').querySelector('.ip').value }
+	// Park the real state — including each column's kind and the typed addresses — plus the sample
+	// strip bodies, so clicks on the sample channels can be served locally rather than firing a real
+	// /api/channel at ip='sample'.
+	tourDemo = { A: { ...state.A }, B: { ...state.B }, ipA: panel('A').querySelector('.ip').value, ipB: panel('B').querySelector('.ip').value, bodies }
 	for (const side of ['A', 'B']) {
 		const s = state[side]
+		// The tour is a walk through the switcher workflow. Force both columns to the switcher so a
+		// column left on Presets cannot hide the sample — and step 1's address target — behind the
+		// library view. exitTourDemo restores the parked kind.
+		s.kind = 'atem'
+		s.multi = side === 'B'
 		s.ip = 'sample'
 		s.device = device
 		s.channels = channels
@@ -1926,11 +2078,14 @@ function enterTourDemo() {
 		s.anchor = null
 		s.error = null
 		s.detail = JSON.parse(JSON.stringify(bodies[side === 'A' ? '1001:-256' : '1:-256']))
-		panel(side).querySelector('.ip').value = 'sample switcher'
+		panel(side).querySelector('.ip').value = SAMPLE_IP_TEXT
 		panel(side).querySelector('.device').innerHTML = '<span class="warn">●</span> <b>Sample switcher</b> — for the tour only. Nothing here is real and nothing can be written.'
 		panel(side).classList.add('sample')
-		renderSideAll(side)
 	}
+	// Reflect the forced kind in the DOM (clears any .lib class and un-presses the Presets toggle)
+	// before rendering, so the conn row and channel lists the tour points at are actually visible.
+	applyMode()
+	for (const side of ['A', 'B']) renderSideAll(side)
 	document.body.classList.add('sample-on')
 	updateActionUI()
 }
@@ -1938,16 +2093,30 @@ function enterTourDemo() {
 function exitTourDemo() {
 	removeGhost()
 	if (!tourDemo) return
-	for (const side of ['A', 'B']) {
-		Object.assign(state[side], tourDemo[side])
-		panel(side).querySelector('.ip').value = side === 'A' ? tourDemo.ipA : tourDemo.ipB
-		panel(side).querySelector('.device').innerHTML = state[side].ip ? deviceLine(state[side].device) : ''
-		panel(side).classList.remove('sample')
-		renderSideAll(side)
+	// Whatever happens in the restore, the tour must always end: clear tourDemo (and refresh the
+	// action UI off the real state) in a finally, so a throw mid-restore can never leave the sample
+	// latched with Copy disabled.
+	try {
+		for (const side of ['A', 'B']) {
+			Object.assign(state[side], tourDemo[side])
+			panel(side).classList.remove('sample')
+		}
+		// Restore the parked kinds/mode to the DOM (panel .lib class, the Switcher|Presets toggle),
+		// then set each device line and redraw from the restored state. Set the ip boxes AFTER
+		// applyMode so its single-switcher mirroring can't clobber the values we are restoring.
+		applyMode()
+		for (const side of ['A', 'B']) {
+			panel(side).querySelector('.ip').value = side === 'A' ? tourDemo.ipA : tourDemo.ipB
+			// deviceLine is null-safe, but a parked side with an ip and no device should read "Not
+			// connected", and a never-touched side stays blank.
+			panel(side).querySelector('.device').innerHTML = state[side].ip ? deviceLine(state[side].device) : ''
+			renderSideAll(side)
+		}
+		document.body.classList.remove('sample-on')
+	} finally {
+		tourDemo = null
+		updateActionUI()
 	}
-	document.body.classList.remove('sample-on')
-	tourDemo = null
-	updateActionUI()
 }
 
 /**
@@ -1959,6 +2128,7 @@ function exitTourDemo() {
  * see it. It only runs against the sample switcher, and it puts the ticks back when it is done.
  */
 let ghostRun = 0
+let ghostSaved = null // the real sections, parked once while the ghost demo toggles them
 
 function ghostCursor() {
 	let g = document.querySelector('.ghostcursor')
@@ -1970,14 +2140,32 @@ function ghostCursor() {
 	return g
 }
 
+/**
+ * Tear the ghost cursor down and, crucially, put the sections back exactly as they were before the
+ * demo first ran. Every teardown path funnels through here (Skip, Done, connect, the yourturn step),
+ * so the restore can never be skipped — the old per-invocation snapshot could capture a half-toggled
+ * state left by a cancelled run and make it permanent, silently excluding EQ or Dynamics from every
+ * later copy.
+ */
 function removeGhost() {
 	ghostRun++
 	document.querySelector('.ghostcursor')?.remove()
+	if (ghostSaved) {
+		Object.assign(state.sections, ghostSaved)
+		ghostSaved = null
+		renderDetail('A')
+		renderDetail('B')
+		updateSummary()
+	}
 }
 
 async function demoBlockClicks() {
 	const run = ++ghostRun
 	const g = ghostCursor()
+	// Snapshot the real sections ONCE, on first entry. A re-entry (Back into this step) starts a new
+	// run but leaves this snapshot intact, so the baseline is always the pre-demo state, never the
+	// half-toggled state a superseded run left behind.
+	if (!ghostSaved) ghostSaved = { ...state.sections }
 	const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 	const moveTo = async (sel) => {
 		const t = document.querySelector(sel)
@@ -2002,17 +2190,15 @@ async function demoBlockClicks() {
 		await wait(700)
 		return run === ghostRun
 	}
-	const before = { ...state.sections }
 	const script = ['eq', 'eq', 'dynamics', 'dynamics']
 	for (const sec of script) {
-		if (!(await moveTo(`#panel-A .block[data-sec="${sec}"]`))) return removeGhost()
-		if (!(await clickBlock(sec))) return removeGhost()
+		// A superseded run just stops — the run that replaced it (or a teardown via removeGhost) owns
+		// the restore. Restoring here would pull the shared snapshot out from under the newer run.
+		if (!(await moveTo(`#panel-A .block[data-sec="${sec}"]`))) return
+		if (!(await clickBlock(sec))) return
 	}
 	if (run !== ghostRun) return
-	Object.assign(state.sections, before)
-	renderDetail('A')
-	renderDetail('B')
-	updateSummary()
+	// Normal completion: removeGhost restores the sections from the single saved snapshot.
 	removeGhost()
 }
 
@@ -2026,6 +2212,9 @@ function startTour({ force = false } = {}) {
 	// declines silently once the tour has been seen, and a sample left standing after a decline
 	// would disable Copy on a real connection forever.
 	if (Tips.isSeen('seq.first-run-v1') && !force) return
+	// A connect the user already kicked off (a prefilled address + Enter, a recent-IP chip) must win
+	// over the auto-tour — dropping the sample on top of an in-flight real connect would latch it.
+	if (connectInFlight && !force) return
 	const wasEmpty = !state.A.channels?.length
 	if (wasEmpty) enterTourDemo()
 	Tips.sequence(
@@ -2050,7 +2239,16 @@ function startTour({ force = false } = {}) {
 				target: '#panel-A .channel-list',
 				placement: 'right',
 				title: 'Left is where sound comes from',
-				text: `Pick the channel you already dialled in. On the right, pick where it should go — ${MOD}-click or shift-click to take several at once.`,
+				text: 'Pick the channel you already dialled in — the one whose sound you want to copy.',
+			},
+			{
+				key: 'tour.pickdest',
+				target: '#panel-B .channel-list',
+				placement: 'left',
+				title: 'Right is where it lands',
+				// Multi-select works only on the destination side, so it is taught pointing at that
+				// side — not at the single-select source list.
+				text: `Pick where it should go. ${MOD}-click adds another channel and shift-click takes a whole range, so one chain can land on several cameras at once.`,
 			},
 			{
 				key: 'tour.blocks',
@@ -2083,7 +2281,7 @@ function startTour({ force = false } = {}) {
 				target: '#browse-open',
 				placement: 'bottom',
 				title: 'Presets other people made',
-				text: 'Chains for real microphones — SM7B, PodMic, lectern goosenecks — with notes on what they are for. Save your own here too, and share them back.',
+				text: 'Chains for real microphones — SM7B, PodMic, lectern goosenecks — with notes on what they are for. To save your own, flip a column to Presets and save it there; the good ones are worth sharing back.',
 			},
 			{
 				key: 'tour.startup',
@@ -2097,7 +2295,11 @@ function startTour({ force = false } = {}) {
 				target: '#panel-A .conn',
 				placement: 'right',
 				title: 'Now your turn',
-				text: 'That was a sample switcher — it disappears when you press Done. Type your own ATEM’s address here and press Connect. Help at the bottom of the window brings all of this back.',
+				// Only claim the channels were a sample when they actually were — Help runs this tour
+				// while connected too, and a live channel list must not be called fake.
+				text: wasEmpty
+					? 'That was a sample switcher — it disappears when you press Done. Type your own ATEM’s address here and press Connect. Help at the bottom of the window brings all of this back.'
+					: 'Type an ATEM’s address here and press Connect whenever you want to point at a different switcher. Help at the bottom of the window brings all of this back.',
 				before: () => removeGhost(),
 			},
 		],
@@ -2188,10 +2390,10 @@ function toggleHelp(force) {
 		'<section id="h-start"><h3>Getting started</h3>' +
 		'<p>Dial in a good mic chain once, then put it on the other channels — or on the switcher in the other room, or save it for next month. Doing that by hand in Blackmagic’s own software means copying about forty numbers across a dozen panels, per channel.</p>' +
 		'<h4>Connecting</h4>' +
-		'<p>Type your switcher’s address in the box at the top of the source column and press <em>Go</em>. The ▾ inside the box offers addresses this app has seen before, plus the one every ATEM ships with.</p>' +
+		'<p>Type your switcher’s address in the box at the top of the source column and press <em>Connect</em>. The ▾ inside the box offers addresses this app has seen before, plus the one every ATEM ships with.</p>' +
 		'<p><b>Finding the address:</b> ATEM Setup, on any machine that can see the switcher, lists it under the switcher’s name. Straight out of the box it is <code>192.168.10.240</code>. This app has to run on a machine on the same network — studio Wi‑Fi and the wired studio network usually are not the same network.</p>' +
 		'<h4>One switcher, or two</h4>' +
-		'<p>Connecting once fills <em>both</em> columns with the same switcher — that is the normal case, copying between channels on one box. To copy from one switcher to another, type the second address in the destination column and press Go; that column takes over its own switcher. Pointing it back at the first address collapses to one again.</p>' +
+		'<p>Connecting once fills <em>both</em> columns with the same switcher — that is the normal case, copying between channels on one box. To copy from one switcher to another, type the second address in the destination column and press Connect; that column takes over its own switcher. Pointing it back at the first address collapses to one again.</p>' +
 		'<h4>The tour</h4>' +
 		'<p>The walkthrough points at each control in turn, using a sample switcher if you have none connected. It runs by itself the first time you open the app.</p>' +
 		'<p><button id="help-tour" class="primary">Show me how it works</button></p>' +
@@ -2211,7 +2413,7 @@ function toggleHelp(force) {
 		'</section>' +
 		'<section id="h-verify"><h3>Did it work</h3>' +
 		'<p>A switcher silently ignores values it will not take — a camera input will not accept a microphone’s +40 dB of gain. So this app measures instead of assuming: every destination is backed up, written, then <b>read back and compared</b>. The band above the status bar reports what actually landed, and <em>What changed</em> opens the field-by-field detail.</p>' +
-		'<p><b>Undo</b> restores the whole batch from those backups. They are kept alongside your presets, in <code class="presetdir">the app’s preset folder</code> — in the desktop app, <em>Presets → Reveal preset folder</em> opens it.</p>' +
+		'<p><b>Undo</b> restores the whole batch from those backups. They are kept alongside your presets, in <code class="presetdir">the app’s preset folder</code> — in the desktop app, <em>Help → Show presets folder</em> opens it.</p>' +
 		'<h4>Making it survive a power cycle</h4>' +
 		'<p>An ATEM forgets audio settings when it loses power unless they are stored as its startup state. Once the sound is right, open ATEM Software Control and choose <em>Save Startup State</em> — otherwise the next cold boot brings back the old numbers. This app cannot do it for you.</p>' +
 		'</section>' +
@@ -2316,12 +2518,15 @@ function connectDiagnosis(ip, message) {
 function renderConnectError(side, box) {
 	const { ip, message } = state[side].error
 	const d = connectDiagnosis(ip, message)
+	// Emit the classes the stylesheet actually defines (.gcause row with its own .gdot, .gwhat/.gfix
+	// blocks, and .gactions for the button row) — the old flat <li><b><span> with .gacts matched no
+	// rules, so cause and fix ran together and the action row was unstyled.
 	box.innerHTML =
 		'<div class="guide bad">' +
-		`<b class="ghead"><span class="gdot"></span>${esc(d.title)}</b>` +
+		`<b class="ghead">${esc(d.title)}</b>` +
 		'<p class="glead">Most likely, in this order:</p>' +
-		`<ol class="gcauses">${d.causes.map((c) => `<li><b>${esc(c.what)}</b><span>${esc(c.fix)}</span></li>`).join('')}</ol>` +
-		`<div class="gacts"><button class="primary retry">Try ${esc(ip)} again</button><span class="gnote">Nothing was changed on any switcher.</span></div>` +
+		`<ol class="gcauses">${d.causes.map((c) => `<li class="gcause"><span class="gdot"></span><span><b class="gwhat">${esc(c.what)}</b><span class="gfix">${esc(c.fix)}</span></span></li>`).join('')}</ol>` +
+		`<div class="gactions"><button class="primary retry">Try ${esc(ip)} again</button><span class="gnote">Nothing was changed on any switcher.</span></div>` +
 		`<details class="graw"><summary>Technical detail</summary><code>${esc(message)}</code></details>` +
 		'</div>'
 	box.querySelector('.retry').onclick = () => connectSide(side)
@@ -2348,6 +2553,9 @@ function renderLibraryGuide(side, box) {
 		'<div class="guide">' +
 		'<b class="ghead">Nothing saved yet</b>' +
 		'<p class="glead">A preset is one channel’s whole sound — gain, EQ, dynamics — kept under a name. The mic chain you want back next month, or on the switcher in the other room.</p>' +
+		// Package D styles .gsteps (list-style:none suppresses the <ol> marker so the <i> badge is the
+		// single number; grid keeps the badge beside the block title/description). Emit the exact
+		// markup its contract documents: <li><i>n</i><b>title</b><span>desc</span></li>.
 		'<ol class="gsteps">' +
 		`<li><i>1</i><b>Put the library on the other side</b><span>Press <em>Presets</em> at the top of the ${other}-hand column. This side goes back to being a switcher.</span></li>` +
 		'<li><i>2</i><b>Pick the channel worth keeping</b><span>Its card appears on the left exactly as it will be stored — a preset always holds the whole channel.</span></li>' +
@@ -2505,12 +2713,22 @@ function notify(kind, headline, detail, opts = {}) {
 	}
 	x.onclick = close
 
-	// Newest at the top, and never more than a screenful.
+	// A sticky toast (an error, or one carrying an Undo) never expires on its own — so it must not be
+	// silently evicted by four quick successes either. Mark it, so trimming can skip it.
+	const life = opts.sticky || opts.undo ? 0 : (TOAST_LIFE[kind] ?? 8000)
+	if (!life) card.dataset.sticky = '1'
+
+	// Newest at the top, and never more than a screenful — but keep the sticky ones and drop the
+	// oldest auto-dismissing toast instead. If every toast is sticky, keep them all rather than lose
+	// an unread error.
 	stack.prepend(card)
-	while (stack.children.length > 4) stack.lastElementChild.remove()
+	while (stack.children.length > 4) {
+		const victims = [...stack.children].filter((c) => c !== card && !c.dataset.sticky)
+		if (!victims.length) break
+		victims[victims.length - 1].remove()
+	}
 	requestAnimationFrame(() => card.classList.add('in'))
 
-	const life = opts.sticky || opts.undo ? 0 : (TOAST_LIFE[kind] ?? 8000)
 	if (life) {
 		timer = setTimeout(close, life)
 		// Reading it should not race the clock.
@@ -2567,9 +2785,14 @@ window.addEventListener('resize', sizeFlowDivider)
 sizeFlowDivider()
 
 // First ever load with nothing connected: the tour introduces itself rather than waiting to be
-// found. Tips.sequence's own seen-flag means it happens once.
+// found. Tips.sequence's own seen-flag means it happens once. The timer is tracked so a connect the
+// user starts inside the first 500ms can cancel it, rather than firing the sample over a live connect.
 window.addEventListener('load', () => {
-	if (!state.A.channels?.length) setTimeout(() => startTour(), 500)
+	if (!state.A.channels?.length)
+		autoTourTimer = setTimeout(() => {
+			autoTourTimer = null
+			startTour()
+		}, 500)
 })
 
 renderRecent()

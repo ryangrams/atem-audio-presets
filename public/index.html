@@ -48,10 +48,10 @@
 						<div class="conn">
 							<label class="sr-only" for="ip-A">Source switcher address</label>
 							<span class="ipwrap">
-								<input class="ip" id="ip-A" type="text" placeholder="192.168.8.20" autocomplete="off" spellcheck="false" inputmode="decimal" />
+								<input class="ip" id="ip-A" type="text" list="recent-ips" placeholder="192.168.8.20" autocomplete="off" spellcheck="false" inputmode="decimal" />
 								<button class="ipmenu" aria-label="Pick a known switcher address" aria-expanded="false" title="Pick a known switcher address">▾</button>
 							</span>
-							<button class="connect">Go</button>
+							<button class="connect">Connect</button>
 						</div>
 						<div class="device" role="status"></div>
 					</div>
@@ -80,10 +80,10 @@
 						<div class="conn">
 							<label class="sr-only" for="ip-B">Destination switcher address</label>
 							<span class="ipwrap">
-								<input class="ip" id="ip-B" type="text" placeholder="192.168.43.20" autocomplete="off" spellcheck="false" inputmode="decimal" />
+								<input class="ip" id="ip-B" type="text" list="recent-ips" placeholder="192.168.43.20" autocomplete="off" spellcheck="false" inputmode="decimal" />
 								<button class="ipmenu" aria-label="Pick a known switcher address" aria-expanded="false" title="Pick a known switcher address">▾</button>
 							</span>
-							<button class="connect">Go</button>
+							<button class="connect">Connect</button>
 						</div>
 						<div class="device" role="status"></div>
 					</div>
@@ -107,8 +107,14 @@
 			<div id="log"></div>
 		</div>
 
+		<!-- The footer is logo + buttons only, nothing else. The "what goes where" summary and the
+		     transient status are kept as invisible live regions: screen readers still hear them,
+		     and sighted users read the same from the green section outlines, the cards, the
+		     selection banner, and the toasts. -->
+		<div class="sr-only" id="summary" role="status" aria-live="polite"></div>
+		<div class="sr-only" id="status" role="status" aria-live="polite"></div>
+
 		<footer class="statusbar">
-			<div class="status" id="status" role="status" aria-live="polite"></div>
 			<div class="madeby">
 				<a class="sulink" href="https://studioupgrade.com" target="_blank" rel="noreferrer"><img src="su-logo.png" alt="" height="26" /> <strong>Studio Upgrade</strong></a>
 				<a class="footbtn loop" href="https://loop.studioupgrade.com" target="_blank" rel="noreferrer">Join the community</a>

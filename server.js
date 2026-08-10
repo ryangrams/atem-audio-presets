@@ -11,7 +11,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { connect, disconnect, disconnectAll, firmwareInfo, status } from './lib/atem-pool.js'
-import { applyChannel, diffChannel, extractChannel, extractSwitcher, listChannels, summarizeChannel } from './lib/fairlight.js'
+import { applyChannel, diffChannel, extractChannel, listChannels, summarizeChannel } from './lib/fairlight.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT ?? 8730)
@@ -234,23 +234,34 @@ app.post(
 		const batch = lastBackup.get(ip)
 		if (!batch?.length) throw new HttpError(404, `No backup recorded for ${ip} in this session`)
 		const atem = await connect(ip)
+		// Restore every level, EQ and dynamics field the strip had, regardless of which sections the
+		// copy carried. applyChannel gates the level writes on `gain`/`volume`/`pan` — a bare
+		// `levels: true` matches none of them, silently leaving gain/fader/pan on the copied values.
+		// normalizeSections emits exactly the keys applyChannel reads. inputConfig stays off: changing
+		// a configuration re-enumerates source ids, which would break the very strip being restored.
+		const undoSections = normalizeSections({ gain: true, volume: true, pan: true, eq: true, dynamics: true, inputConfig: false })
 		const restored = []
 		for (const entry of batch) {
 			try {
-				const result = await applyChannel(
-					atem,
-					{ inputId: entry.to.input, sourceId: entry.to.source },
-					entry.backup.channel,
-					// Restore everything the strip had, regardless of which sections were copied.
-					{ levels: true, eq: true, dynamics: true, inputConfig: false }
-				)
-				restored.push({ meta: entry.backup.channel.meta, ok: true, ...result })
+				const result = await applyChannel(atem, { inputId: entry.to.input, sourceId: entry.to.source }, entry.backup.channel, undoSections)
+				restored.push({ entry, meta: entry.backup.channel.meta, ok: true, ...result })
 			} catch (e) {
-				restored.push({ meta: entry.backup.channel.meta, ok: false, error: e.message })
+				restored.push({ entry, meta: entry.backup.channel.meta, ok: false, error: e.message })
 			}
 		}
+
+		// Read the strips back and diff them against the backup we just wrote — undo honesty has to
+		// match copy honesty (house rule 2). A field that did not restore shows up in `remaining`
+		// rather than being assumed good, exactly as /api/apply does.
+		await new Promise((r) => setTimeout(r, 700))
+		for (const r of restored) {
+			if (!r.ok) continue
+			r.after = extractChannel(atem.state, Number(r.entry.to.input), String(r.entry.to.source))
+			r.remaining = diffChannel(r.after, r.entry.backup.channel, undoSections)
+		}
+
 		lastBackup.delete(ip)
-		res.json({ restored: restored.map((r) => r.meta), results: restored })
+		res.json({ restored: restored.map((r) => r.meta), results: restored.map(({ entry, ...r }) => r) })
 	})
 )
 
@@ -541,42 +552,6 @@ app.use(
 		} finally {
 			clearTimeout(timer)
 		}
-	})
-)
-
-// ---------------------------------------------------------------- whole-switcher snapshots
-
-app.get(
-	'/api/snapshot',
-	wrap(async (req, res) => {
-		const ip = requireIp(req)
-		const atem = await connect(ip)
-		res.json(extractSwitcher(atem.state, await deviceInfo(ip, atem)))
-	})
-)
-
-app.post(
-	'/api/restore',
-	wrap(async (req, res) => {
-		const ip = requireIp(req)
-		const sections = normalizeSections(req.body.sections)
-		const snapshot = req.body.snapshot
-		if (!Array.isArray(snapshot?.channels)) throw new HttpError(400, 'That file is not a switcher snapshot')
-		const atem = await connect(ip)
-
-		const results = []
-		for (const channel of snapshot.channels) {
-			const key = `${channel.meta.inputId}:${channel.meta.sourceId}`
-			try {
-				const out = await applyChannel(atem, { inputId: channel.meta.inputId, sourceId: channel.meta.sourceId }, channel, sections)
-				results.push({ key, label: channel.meta.label, ok: true, ...out })
-			} catch (e) {
-				// A snapshot taken under a different input configuration will name strips that no
-				// longer exist. Skip them by name rather than aborting the whole restore.
-				results.push({ key, label: channel.meta.label, ok: false, error: e.message })
-			}
-		}
-		res.json({ results })
 	})
 )
 

@@ -31,6 +31,7 @@ const Tips = (() => {
 	let dom = null
 	let cur = null // { key, target, text, title, placement, seqCtl }
 	let raf = null
+	let placeRetry = 0 // bounded retries for scroll-into-view / first-paint 0×0 geometry
 
 	function build() {
 		if (dom) return dom
@@ -53,7 +54,12 @@ const Tips = (() => {
 		dom = { layer, spot, callout, arrow, body }
 		window.addEventListener('resize', schedule)
 		window.addEventListener('scroll', schedule, true)
-		new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true, attributes: true })
+		// The layer writes to its own style/class every place() pass. Ignore mutations that are all
+		// inside it — reacting to them would re-schedule place() forever, a rAF loop of forced reflows.
+		new MutationObserver((records) => {
+			if (dom && records.every((r) => dom.layer.contains(r.target))) return
+			schedule()
+		}).observe(document.body, { childList: true, subtree: true, attributes: true })
 		return dom
 	}
 
@@ -72,14 +78,53 @@ const Tips = (() => {
 		return r.bottom > 0 && r.right > 0 && r.top < window.innerHeight && r.left < window.innerWidth
 	}
 
+	/** Centre the callout with no spotlight — for a sequence step whose target cannot be shown, so
+	 *  Next/Back/Skip stay reachable rather than the whole tour vanishing. */
+	function placeCentered() {
+		const { spot, callout, arrow, layer } = build()
+		spot.style.width = '0px'
+		spot.style.height = '0px'
+		callout.style.left = '-9999px'
+		callout.style.top = '0px'
+		layer.classList.add('on')
+		const cw = callout.offsetWidth
+		const ch = callout.offsetHeight
+		callout.style.left = `${Math.max(14, (window.innerWidth - cw) / 2)}px`
+		callout.style.top = `${Math.max(14, (window.innerHeight - ch) / 2)}px`
+		arrow.className = 'tip-arrow' // nothing to point at
+	}
+
 	function place() {
 		if (!cur) return
 		const { spot, callout, arrow, layer } = build()
 		const targetEl = document.querySelector(cur.target)
+
+		// First paint (and the embedded browser pane) can report the viewport as 0×0. Treat that as
+		// "not yet" and try again next frame rather than mis-placing — bounded, so it cannot spin.
+		if ((window.innerWidth <= 0 || window.innerHeight <= 0) && placeRetry < 10) {
+			placeRetry++
+			schedule()
+			return
+		}
+
+		// Connected but scrolled out of view (the columns stack and scroll on narrow windows). Bring
+		// it into view and re-measure instead of hiding the whole tour — the callout carries Next/Skip.
+		if (targetEl?.isConnected && !visible(targetEl) && placeRetry < 10) {
+			placeRetry++
+			targetEl.scrollIntoView({ block: 'center', inline: 'nearest' })
+			schedule()
+			return
+		}
+
 		if (!visible(targetEl)) {
+			placeRetry = 0
+			// A lone tip with no usable target just means "not now" — hide it. But a sequence step must
+			// never strand the user: keep its callout and navigation on screen, centred, spotlight-less.
+			if (cur.seqCtl) return placeCentered()
 			layer.classList.remove('on')
 			return
 		}
+		placeRetry = 0
 		const pad = 6
 		const r = targetEl.getBoundingClientRect()
 		const radius = Math.min(12, Math.max(4, parseFloat(getComputedStyle(targetEl).borderRadius) || 6) + pad)
@@ -192,9 +237,14 @@ const Tips = (() => {
 
 	function show(opts) {
 		if (!opts?.key || !opts?.target) return
+		// A running sequence step owns the layer. A stray non-sequence tip (a coach-mark fired by a
+		// re-render) must not replace it — that would orphan the tour's Next/Back/Done and strand the
+		// user. Sequence steps replace each other freely; only outside tips are refused.
+		if (cur?.seqCtl && !opts.seqCtl) return
 		if (!opts.seqCtl && seen(opts.key)) return
 		const same = cur && cur.key === opts.key
 		cur = opts
+		placeRetry = 0
 		renderBody(opts)
 		if (!same) {
 			build().callout.style.opacity = '0'
@@ -209,6 +259,7 @@ const Tips = (() => {
 
 	function hide() {
 		cur = null
+		placeRetry = 0
 		if (dom) dom.layer.classList.remove('on')
 	}
 

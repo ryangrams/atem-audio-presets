@@ -352,8 +352,14 @@ function renderStripCard(box, d, opts = {}) {
 		return ''
 	}
 
+	// The destination card shows one channel's preview, but several may be selected — so its header
+	// can be overridden (opts.title = {label, sub}) to say "Multi-select" instead of naming just one.
 	const strip = `<div class="strip">
-		<div class="strip-name" title="${d.meta.label}">${shortLabel(d.meta.label)}</div>
+		${
+			opts.title
+				? `<div class="strip-name multi" title="${opts.title.label}">${opts.title.label}<span class="subname">${opts.title.sub}</span></div>`
+				: `<div class="strip-name" title="${d.meta.label}">${shortLabel(d.meta.label)}</div>`
+		}
 		<div class="ctrl block${cls('gain')}" data-sec="gain"${a11y('gain', 'Gain')}>
 			<b>Gain</b>
 			${knob(((gainL.gain ?? 0) / 100 + 60) / 66, 0, '#3ec97a')}
