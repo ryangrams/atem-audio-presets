@@ -27,15 +27,20 @@ mockup behaviour and this plan disagree, this plan wins.
 ## Execution order
 
 ```
-Wave 1 (parallel, no file overlap):
-  A  app.js + tips.js + index.html + server.js + electron/main.js   ← the big one
+Wave 1 (parallel, no file overlap) — the release-blocking bug fixes:
+  A  app.js + tips.js + index.html + server.js + electron/main.js   ← the big one (incl. cut snapshot)
   C  demo.js
   D  style.css
-Wave 2 (after A lands, because it touches server.js and reacts to A's app.js changes):
-  B  browse.js + the community-catalogue reality
+  F  presets-seed/ + first-run seed (Ryan-owned content; runs alongside)
+Wave 2 (after A lands; larger, does NOT block the Wave-1 release):
+  B  full community backend — browse.js + server proxy + atem-preset-library (Cloudflare D1)
 Wave 3:
   E  integration verification pass (no code ownership; files bugs back to A–D)
 ```
+
+Decisions folded in (from Ryan): snapshot/restore is **cut**, not rehomed (Package A);
+the community browser gets the **full backend** built (Package B, wave 2); publishing is the
+**GitHub PR flow**; ship **~5 seed presets** + research real catalogue content (Package F).
 
 ---
 
@@ -74,10 +79,13 @@ Owns: `public/app.js`, `public/tips.js`, `public/index.html`, `server.js`, `elec
 7. **APP-07, APP-08** — two-switcher collapse impossible from the destination column + applyMode
    clobbering an address mid-typing; and section-toggle rebuilding the save form, discarding the
    user's typed preset name/notes (preserve form state across re-renders).
-8. **HTML-01/APP-15 (#summary missing — the "what goes where" line is gone), HTML-02/APP-16
-   (snapshot unreachable)** — restore a summary element in the status bar and give snapshot a home
-   (recommended: an action row inside each column's ▾ address menu, "Download snapshot of this
-   switcher"; your judgment within: reachable, not prominent).
+8. **HTML-01/APP-15 (#summary missing — the "what goes where" line is gone)** — restore a summary
+   element in the status bar so updateSummary has a target again.
+   **HTML-02/APP-16 (snapshot) — DECISION: cut it entirely.** Remove the snapshot/restore feature:
+   delete `snapshot()`, `restoreSnapshot()`, the dead `#snapshot-A/#snapshot-B` handlers, the
+   `/api/snapshot` and `/api/restore` server routes, and any help/tour/empty-state copy that
+   mentions snapshots. Presets + per-channel copy cover the need; less surface. (DEMO-05/DEMO-07,
+   the demo snapshot stubs, then become dead too — tell Package C to delete them.)
 9. **The guide-markup family** — APP-17 (.gcause/.gwhat/.gfix/.gfail markup mismatch),
    APP-18 (.gsteps has no CSS — emit the classes the stylesheet defines; if a rule is genuinely
    missing, coordinate: the CSS file belongs to D in wave 1, so instead emit classes that exist,
@@ -131,40 +139,47 @@ establishes — coordinate through comments, not by editing app.js). Verify with
 open help over toasts, tour over modals, browse over demo chip; keyboard-tab every control
 watching focus rings.
 
-## Package B — Community browser vs the real catalogue (wave 2: browse.js + server.js /api/community block)
+## Package B — Community catalogue: build the real backend (wave 2, separate larger effort)
 
-Owns: `public/browse.js` and the `/api/community` section of `server.js` (A has finished with the
-file by now). AUDIT ids BRW-01..BRW-13.
+Owns: `public/browse.js`, the `/api/community` section of `server.js`, AND the
+`~/SUDev/atem-preset-library` repo (Cloudflare Pages Functions + D1). AUDIT ids BRW-01..BRW-13.
+**DECISION: build the full backend.** This is now the biggest package and spans two repos, so it
+is deliberately sequenced AFTER the Wave-1 bug fixes ship — it must not block the release that
+fixes the sample switcher, undo, etc.
 
-**The existential fact (BRW-01):** browse.js was written against a catalogue API that does not
-exist. The real catalogue (presets.studioupgrade.com, Cloudflare Pages + D1) serves exactly:
-`GET /index.json` (packs: id/name/description/author/tags/presetCount/presets[]/devices/checksum),
-`GET /packs/<file>` (full pack with channel bodies), `GET /api/votes` → `{votes:{id:n}}`,
-`POST /api/vote {packId}`. Nothing else. No search endpoint, no ratings, no comments, no publish,
-no install counts.
+**Starting point.** Today the catalogue (presets.studioupgrade.com, Cloudflare Pages + D1) serves
+only: `GET /index.json`, `GET /packs/<file>`, `GET /api/votes`, `POST /api/vote`. browse.js
+(BRW-01) expects a much richer API. Build the missing half.
 
-Scope decision, already made — implement it, don't relitigate:
-- Rebuild browse.js's data layer on what exists: fetch index.json + votes through the server proxy;
-  search/facets computed **client-side** from the index; sort by votes ("Top rated" → "Most voted"),
-  name, createdAt. Detail view = the pack's real channels rendered with renderStripCard.
-- Rating stars → a single vote affordance backed by POST /api/vote (BRW-06); drop fake helpful
-  counters (BRW-10) and comments UI entirely — commenting has no backend; remove rather than fake.
-- Publish (BRW-04): the honest path today is the GitHub PR flow. Keep the form; on submit, produce
-  the pack file (download) and open the prefilled GitHub new-issue/PR URL with instructions —
-  clearly labelled. No fake success.
-- Fix the local bugs regardless: search focus loss on re-render (BRW-02 — patch, don't rebuild,
-  the grid), add-to-library overwrite without collision check (BRW-03 — suffix like importFile
-  does), privacy claim vs actual payload (BRW-05 — make the claim true by stripping, not by
-  editing the claim), detail-error spinner (BRW-07), comment-box clearing before send → moot if
-  comments go, stale CAT.error poisoning the list view (BRW-09), notes/sampleUrl prefill via the
-  full pack fetch (BRW-11), Escape-during-publish null-deref (BRW-12), double-escaped toast
-  (BRW-13). Server side: the proxy forwards to the catalogue root — make it serve /index.json and
-  /packs/* too, with the same 8s timeout and polite failure.
+Backend to build in `atem-preset-library` (Pages Functions + D1, patterns already established there):
+- **Ratings** — a `ratings` table (pack_id, voter-hash, stars 1–5, created_at); `GET /api/ratings`
+  → `{id:{avg,count}}`, `POST /api/rate {packId,stars}`, one rating per voter (salted-IP hash, as
+  votes already do). Keep the existing votes as a separate "useful" signal or fold into ratings —
+  your call, but don't lose existing vote data.
+- **Comments** — a `comments` table (pack_id, author, body, created_at); `GET /api/comments?packId`,
+  `POST /api/comment {packId,author,body}`. Rate-limit and length-cap server-side; **add Cloudflare
+  Turnstile** on the comment and rating POSTs — an unauthenticated write endpoint gets abused fast.
+  Sanitise on read (comments render as text, never HTML).
+- **Install/use counts** — increment on add-to-library via a lightweight `POST /api/installed
+  {packId}` (best-effort, deduped by voter-hash) or derive from votes; don't fabricate the numbers.
+- Extend `build-index.mjs`/index.json with `mic`, `style`, `notes`, `sampleUrl` per preset so the
+  browser's facets and detail have real data (they're already validated on submission).
+- Publishing stays the **GitHub PR flow** (Ryan gates what enters the catalogue): the publish form
+  exports a valid pack and opens a prefilled PR against atem-preset-library. Do NOT build a public
+  write-endpoint for new packs — only for interactions (ratings/comments/installs) on packs that
+  already passed review.
 
-Verify: with the network up — browse lists the real (currently empty) catalogue and says so
-warmly; with packs present locally (point ATEM_CATALOGUE_URL at a local fixture dir) — search,
-facets, detail, vote, add-to-library all work; offline — the existing graceful panel; publish
-produces a valid pack file that `atem-preset-library/scripts/build-index.mjs --check` accepts.
+Then wire browse.js to the real endpoints and fix its local bugs: search focus loss on re-render
+(BRW-02 — patch the grid, don't rebuild it), add-to-library overwrite (BRW-03 — suffix like
+importFile), privacy claim vs payload (BRW-05 — make the claim true by stripping), detail-error
+spinner (BRW-07), stale CAT.error poisoning the list (BRW-09), notes/sampleUrl prefill (BRW-11),
+Escape-during-publish null-deref (BRW-12), double-escaped toast (BRW-13). Server proxy: forward
+index.json, /packs/*, and every new /api/* with the 8s timeout and polite failure.
+
+Verify: against a local fixture (`ATEM_CATALOGUE_URL` → a local Pages dev server) exercise search,
+facets, detail, rate, comment (with Turnstile in test mode), add-to-library (install count ticks),
+and offline degrade; publish produces a pack that `atem-preset-library/scripts/build-index.mjs
+--check` accepts; comments/ratings survive a reload (persisted in D1).
 
 ## Package E — Integration pass (wave 3, no code ownership)
 
@@ -176,10 +191,26 @@ port); `node --check` all JS + the CSS brace balance; the classscan for emitted-
 drift. File anything found as new AUDIT entries and hand back to the owning package — do not fix
 in place.
 
-## Open items that are Ryan's, not yours
+## Package F — Seed presets (Ryan-owned content, do this alongside Wave 1)
 
-- Sponsors letter promises a $5/month tier and one-time giving (app.js ~1714) — needs Ryan to
-  confirm his GitHub Sponsors page actually offers both, or reword.
-- Starter presets: ship a `presets-seed/` for first-run? (Decision pending since the port.)
-- Whether the community catalogue grows a real API (ratings/comments/publish) later — Package B's
-  degrade is the honest v1, not the end state.
+Owns: a new `presets-seed/` directory + the first-run seed logic in `electron/main.js` and/or
+`server.js`. **DECISION: ship ~5 seed presets locally, and research real values for the online
+catalogue too.**
+
+- Author ~5 starter presets as real `atem-audio-preset` files (the demo.js chains — SM7B, PodMic,
+  gooseneck/lectern, a lav, a safety-net gate — are a good basis; refine the values against
+  published best-practice for each mic). Put them in `presets-seed/`; on first launch, if the
+  user's preset dir is empty, copy them in (Electron `app.whenReady`, guarded so it runs once).
+  They also serve as honest examples.
+- **Research task (Ryan asked for online sleuthing):** gather credible, sourced EQ/dynamics
+  starting points for common broadcast/podcast mics and translate them into the ATEM raw format
+  (dB×100, Hz, Q×100, shape ids). Cite sources in each preset's `notes`.
+- **Honesty rule:** seed content is authored by **Studio Upgrade**, labelled as such — never
+  faked as anonymous "community" submissions with invented usernames or ratings. The catalogue's
+  whole premise is "chains real people dialled in"; SU's own starter packs are legitimate, fake
+  personas are not. These seed the catalogue via the normal PR/validation path.
+
+## Open — Ryan-owned, non-blocking
+
+- Sponsors letter (app.js ~1714): CONFIRMED by Ryan — $5/month tier and one-time giving both
+  exist. Leave the copy as written.
