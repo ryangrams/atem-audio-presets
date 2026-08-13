@@ -2432,6 +2432,7 @@ function toggleHelp(force) {
 	const box = $('#helppanel')
 	const btn = $('#help-open')
 	const open = force ?? box.hidden
+	if (open) togglePrivacy(false) // the two full-screen panels are mutually exclusive
 	box.hidden = !open
 	btn.setAttribute('aria-expanded', open ? 'true' : 'false')
 	document.body.classList.toggle('help-on', open)
@@ -2562,6 +2563,63 @@ function toggleHelp(force) {
 	}
 	document.addEventListener('keydown', onKey)
 }
+
+/**
+ * The privacy panel. Static, bundled with the app so it reads offline — the whole point is that the
+ * app is local, so its privacy notice must not need the network to see. Reuses the help panel's look.
+ */
+function togglePrivacy(force) {
+	const box = $('#privacypanel')
+	const btn = $('#privacy-open')
+	const open = force ?? box.hidden
+	if (open) toggleHelp(false) // the two full-screen panels are mutually exclusive
+	box.hidden = !open
+	btn.setAttribute('aria-expanded', open ? 'true' : 'false')
+	document.body.classList.toggle('help-on', open)
+	if (!open) {
+		box.textContent = ''
+		return
+	}
+	box.innerHTML =
+		'<div class="helpdoc">' +
+		'<div class="helphead"><div><h2>Privacy</h2><p class="helpsub">This app runs on your computer, and almost nothing leaves it.</p></div>' +
+		'<button id="privacyclose" aria-label="Close privacy">×</button></div>' +
+		'<article class="helpbody">' +
+		'<section><p>There are <b>no accounts, no logins, no analytics, no tracking, no advertising, and no cookies</b>. A few optional features talk to the internet — here is exactly what each one sends, and to whom.</p></section>' +
+		'<section><h3>Stays on your computer</h3><ul>' +
+		'<li>Your saved presets and library.</li>' +
+		'<li>The switchers you connect to, and everything you copy.</li>' +
+		'<li>Your settings and recent addresses (in your browser’s local storage).</li>' +
+		'</ul><p>We never see any of it.</p></section>' +
+		'<section><h3>Leaves your computer only when you choose to</h3>' +
+		'<p><b>Browsing, rating, favouriting or installing community presets.</b> To stop one person voting twice, we store a one‑way <em>salted hash</em> of your IP address — not the address itself, and nothing that identifies you. It cannot be reversed back to you.</p>' +
+		'<p><b>Comments.</b> The text you write, and a display name if you add one, are <b>public</b>. Do not put anything private in a comment.</p>' +
+		'<p><b>Sending feedback.</b> Your message, your device details (app version, operating system, and the ATEM model and firmware if you’re connected), and — only if you tick the box — a screenshot of the app, are sent to open a ticket on our <b>public</b> GitHub issue tracker. The screenshot is opt‑in and previewed, so you see exactly what is sent. An email, if you give one, is kept <b>private</b> — only we can see it — so we can reply.</p>' +
+		'<p><b>Publishing a preset.</b> This opens a pull request on <em>your own</em> GitHub account; it goes wherever you send it.</p>' +
+		'<p><b>Human check.</b> Community actions run Cloudflare Turnstile, a privacy‑preserving check that confirms you are not a bot without tracking you.</p></section>' +
+		'<section><h3>Who processes this</h3><ul>' +
+		'<li><b>Cloudflare</b> — hosts the community catalogue, runs Turnstile, and stores feedback screenshots. <a href="https://www.cloudflare.com/privacypolicy/" target="_blank" rel="noreferrer">Their policy</a>.</li>' +
+		'<li><b>GitHub</b> — holds community presets and feedback tickets. <a href="https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement" target="_blank" rel="noreferrer">Their policy</a>.</li>' +
+		'</ul></section>' +
+		'<section><h3>How long things are kept</h3><ul>' +
+		'<li>Feedback screenshots are deleted automatically after about 45 days.</li>' +
+		'<li>Salted‑IP hashes are kept so vote counts stay honest.</li>' +
+		'<li>Comments and published presets are public and stay until removed.</li>' +
+		'</ul></section>' +
+		'<section><h3>Your choices</h3>' +
+		'<p>Don’t use the community or feedback features and nothing leaves your machine. Anything you post or publish is yours to decide on — to have a comment, preset or feedback ticket you sent taken down, reach us with the <b>Feedback</b> button or at <a href="https://studioupgrade.com" target="_blank" rel="noreferrer">studioupgrade.com</a> and we’ll remove it.</p></section>' +
+		'<section class="privfoot"><p>Not affiliated with Blackmagic Design. Last updated August 2026.</p></section>' +
+		'</article></div>'
+	box.querySelector('#privacyclose').onclick = () => togglePrivacy(false)
+	box.scrollTop = 0
+	const onKey = (e) => {
+		if (e.key !== 'Escape') return
+		togglePrivacy(false)
+		document.removeEventListener('keydown', onKey)
+	}
+	document.addEventListener('keydown', onKey)
+}
+$('#privacy-open').onclick = () => togglePrivacy()
 
 /**
  * Why a connect failed, in words someone can act on.

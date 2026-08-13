@@ -4116,3 +4116,6 @@ button.ghost {
 	text-decoration: none;
 }
 .fbtrack:hover { text-decoration: underline; }
+
+/* privacy panel footer note (reuses the help panel look) */
+.helpbody .privfoot p { color: var(--faint); font-size: 11.5px; margin-top: 4px; }

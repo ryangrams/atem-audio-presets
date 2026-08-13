@@ -176,7 +176,7 @@ function renderFeedback() {
 		img.src = FB.shot
 		img.alt = 'Screenshot preview'
 		shotBox.append(img)
-		shotBox.append(el('div', 'fbshotnote', 'This is exactly what will be attached — nothing else is sent.'))
+		shotBox.append(el('div', 'fbshotnote', 'This is exactly what will be attached — it becomes part of a public ticket, so uncheck it if anything on screen is private.'))
 	} else {
 		shotBox.append(el('div', 'fbshotnote', 'Screenshot could not be captured — your report will still send.'))
 	}
@@ -198,7 +198,7 @@ function renderFeedback() {
 	send.onclick = submitFeedback
 	card.append(send)
 
-	card.append(el('p', 'fbfoot', 'A quick human-check runs when you send. Your note becomes a ticket we can track — thank you.'))
+	card.append(el('p', 'fbfoot', 'A quick human-check runs when you send. Your report opens a public ticket we can track; an email, if you add one, stays private. Thank you.'))
 	root.append(card)
 }
 
