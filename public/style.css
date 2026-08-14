@@ -1206,11 +1206,44 @@ details summary:hover {
 	clip-path: inset(50%);
 	left: 14px;
 }
+/* Three columns: an empty left cell, the centred brand+links group, and the right group (Feedback +
+   Privacy). The left cell and the right cell are both 1fr, so the centre group stays centred in the
+   FULL footer width no matter how wide the right group is — the right group never nudges it. */
 .madeby {
+	display: grid;
+	grid-template-columns: 1fr auto 1fr;
+	align-items: center;
+	gap: 12px;
+	width: 100%;
+	margin: 0;
+}
+.footgroup {
 	display: flex;
 	align-items: center;
 	gap: 12px;
-	margin: 0;
+	min-width: 0;
+}
+.footcenter {
+	justify-content: center;
+	flex-wrap: wrap;
+}
+.footright {
+	justify-content: flex-end;
+}
+/* Too narrow for the three columns to sit apart without colliding: drop the split and let everything
+   flow into one centred, wrapping row — Feedback and Privacy join the rest. */
+@media (max-width: 860px) {
+	.madeby {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+	}
+	.footpad {
+		display: none;
+	}
+	.footgroup {
+		display: contents;
+	}
 }
 .sulink {
 	display: flex;
