@@ -7,3 +7,7 @@ presets/_backups/
 
 .DS_Store
 dist/
+
+# Local runtime marker (server writes this after seeding) + editor/preview config
+presets/.seeded
+.claude/
